@@ -1,2 +1,6 @@
 # MLflow experiment artifacts (stored in workspace, not source code)
 demand_forecasting/
+
+# Python artifacts
+__pycache__/
+*.pyc
