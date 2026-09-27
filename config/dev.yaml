@@ -1,0 +1,220 @@
+# ===========================================================================
+# Dev Environment Configuration — Single File
+# Combines bronze and silver layer settings for the dev environment.
+# Bronze notebook loads cfg["bronze"]; silver notebook loads cfg["silver"].
+# Shared environment values are at the top level.
+# ===========================================================================
+
+# --- Shared environment settings ---
+environment: dev
+catalog: mle
+schemas:
+  bronze: bronze
+  silver: silver
+  gold: gold
+  features: features
+source_path: /Volumes/mle/default/data/supply_chain_dataset.csv
+
+# ===========================================================================
+# Bronze layer
+# ===========================================================================
+bronze:
+  source:
+    format: csv
+    options:
+      header: true
+      inferSchema: true
+
+  target:
+    table: supply_chain_dataset_bronze
+
+  write:
+    format: delta
+    mode: overwrite
+    overwrite_schema: true
+
+  audit_columns:
+    ingestion_timestamp: bronze_ingestion_timestamp
+
+# ===========================================================================
+# Silver layer
+# ===========================================================================
+silver:
+  source:
+    bronze_table: supply_chain_dataset_bronze
+
+  target:
+    silver_table: supply_chain_dataset_silver
+    quarantine_table: supply_chain_dataset_quarantine
+
+  write:
+    format: delta
+    mode: overwrite
+    overwrite_schema: true
+
+  # --- Deduplication ---
+  dedup:
+    key_column: transaction_id          # partition / business key
+    order_column: bronze_ingestion_timestamp  # earliest row wins (row_number == 1)
+
+  # --- Type conversions (column -> Spark type) ---
+  type_conversions:
+    - column: transaction_date
+      to_type: date
+    - column: ingestion_timestamp
+      to_type: timestamp
+    - column: bronze_ingestion_timestamp
+      to_type: timestamp
+
+  # --- Audit columns added by this layer ---
+  audit_columns:
+    silver_ingestion_timestamp: silver_ingestion_timestamp
+
+  # --- Data quality rules ---
+  data_quality:
+    # Columns that must not be null
+    critical_columns:
+      - transaction_id
+      - transaction_date
+      - product_name
+      - ordered_quantity
+      - total_cost_usd
+
+    # Date/timestamp columns that are invalid if null AFTER type conversion
+    date_validation_columns:
+      - transaction_date
+      - ingestion_timestamp
+
+    # Format validations: column values must match a regex pattern
+    format_validations:
+      - column: transaction_id
+        name: transaction_id_format
+        pattern: '^TXN-\d{8}-\d{8}$'
+
+    # Cross-field validations: each rule is an expression that must evaluate to true.
+    # If false (or any involved column is null), the record is flagged as bad.
+    cross_field_validations:
+      - name: delay_days_mismatch
+        columns: [delay_days, actual_lead_time_days, expected_lead_time_days]
+        expression: "delay_days == actual_lead_time_days - expected_lead_time_days"
+
+  # --- Quarantine reason labels (one per failing check) ---
+  quarantine:
+    reason_labels:
+      - column: transaction_id
+        label: null_transaction_id
+      - column: transaction_date
+        label: null_or_invalid_transaction_date
+      - column: product_name
+        label: null_product_name
+      - column: ordered_quantity
+        label: null_ordered_quantity
+      - column: total_cost_usd
+        label: null_total_cost_usd
+      - column: ingestion_timestamp
+        label: invalid_ingestion_timestamp
+      - validation: delay_days_mismatch
+        label: delay_days_mismatch
+      - format_validation: transaction_id_format
+        label: invalid_transaction_id_format
+
+# ===========================================================================
+# Gold layer
+# ===========================================================================
+gold:
+  source:
+    silver_table: supply_chain_dataset_silver
+
+  target:
+    gold_table: product_city_demand
+
+  write:
+    format: delta
+    mode: overwrite
+    overwrite_schema: true
+
+  # --- Grain: one row per (product_name, destination_city, transaction_date) ---
+  grain:
+    key_columns:
+      - product_name
+      - destination_city
+      - transaction_date
+
+  # --- Audit columns added by this layer ---
+  audit_columns:
+    gold_ingestion_timestamp: gold_ingestion_timestamp
+
+  # --- Data quality rules ---
+  data_quality:
+    # Columns in Silver that must be non-null BEFORE aggregation
+    silver_critical_columns:
+      - transaction_date
+      - product_name
+      - destination_city
+      - demand_quantity
+      - ordered_quantity
+      - transaction_id
+
+    # Columns that must not be null in the Gold table (post-write)
+    critical_columns:
+      - transaction_date
+      - product_name
+      - destination_city
+      - demand_quantity
+      - ordered_quantity
+      - transaction_count
+
+    # Measure columns that must be non-negative
+    non_negative_columns:
+      - demand_quantity
+      - ordered_quantity
+      - transaction_count
+      - total_product_cost_usd
+      - total_transportation_cost_usd
+      - total_cost_usd
+
+# ===========================================================================
+# Feature Engineering layer
+# ===========================================================================
+feature_engineering:
+  source:
+    gold_table: product_city_demand
+
+  target:
+    feature_table: product_city_demand_features
+
+  write:
+    format: delta
+    mode: overwrite
+    overwrite_schema: true
+
+  # --- Primary keys for Feature Store (time series table) ---
+  primary_keys:
+    - product_name
+    - destination_city
+    - transaction_date
+
+  timeseries_column: transaction_date
+
+  # --- Feature engineering parameters ---
+  features:
+    lag_windows: [1, 7]
+    lag_columns:
+      - demand_quantity
+    rolling_window: 7
+    rolling_columns:
+      - demand_quantity
+    time_features:
+      - day_of_week
+      - day_of_month
+      - is_weekend
+      - quarter
+
+  # --- Data quality rules ---
+  data_quality:
+    critical_columns:
+      - transaction_date
+      - product_name
+      - destination_city
+      - demand_quantity
+
