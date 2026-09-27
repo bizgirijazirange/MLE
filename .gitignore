@@ -4,3 +4,4 @@ demand_forecasting/
 # Python artifacts
 __pycache__/
 *.pyc
+*.egg-info/
