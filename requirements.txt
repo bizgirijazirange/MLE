@@ -1,0 +1,3 @@
+# External dependencies (not pre-installed in Databricks Runtime)
+# Pre-installed packages (pyspark, mlflow, scikit-learn, pandas, numpy, pyyaml) are not listed here.
+databricks-feature-engineering
