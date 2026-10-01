@@ -218,3 +218,22 @@ feature_engineering:
       - destination_city
       - demand_quantity
 
+# ===========================================================================
+# Model Lifecycle — Training, Validation, Registration, and Promotion
+# ===========================================================================
+# PROJECT-SPECIFIC THRESHOLDS — calibrate these from validation results
+# and business requirements.  Adjust as the model and data mature.
+# ===========================================================================
+model_lifecycle:
+  # Absolute performance gates (candidate must satisfy ALL on validation set)
+  min_r2: 0.30            # Minimum R² on validation set
+  max_mae: 5000           # Maximum MAE on validation set
+  max_rmse: 6000          # Maximum RMSE on validation set
+
+  # Model registry names (within {catalog}.models schema)
+  model_name: demand_forecast_lr
+  prediction_table: demand_predictions
+
+  # MLflow experiment
+  experiment_name: /Users/girija.zirange@bizmetric.com/MLE/demand_forecasting
+

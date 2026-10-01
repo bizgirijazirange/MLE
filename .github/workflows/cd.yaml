@@ -1,0 +1,59 @@
+# ===========================================================================
+# CD Pipeline — MLE Supply Chain Pipeline
+# ===========================================================================
+# GitHub Actions workflow that validates and deploys the Databricks bundle.
+#
+# Triggers:
+#   - Pull request to main  → validate only (dry-run)
+#   - Push to main           → validate + deploy + run the pipeline job
+#   - Manual (workflow_dispatch) → validate + deploy + run
+#
+# Required GitHub secrets:
+#   DATABRICKS_HOST   — e.g. https://<workspace>.cloud.databricks.com
+#   DATABRICKS_TOKEN  — personal access token (PAT) or service-principal token
+#
+# To add secrets: repo → Settings → Secrets and variables → Actions → New secret
+# ===========================================================================
+
+name: CD — MLE Pipeline
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:  # Allow manual triggering from the Actions tab
+
+jobs:
+  validate-and-deploy:
+    runs-on: ubuntu-latest
+
+    env:
+      DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+      DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
+
+    steps:
+      # --- Checkout repository ---
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # --- Install Databricks CLI ---
+      - name: Install Databricks CLI
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/databricks/cli/main/install.sh | sh
+          echo "$HOME/bin" >> $GITHUB_PATH
+
+      # --- Validate bundle (always runs — PR and push) ---
+      - name: Validate bundle (dev)
+        run: databricks bundle validate --target dev
+
+      # --- Deploy + run (only on push to main or manual trigger) ---
+      - name: Deploy to dev
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        run: databricks bundle deploy --target dev
+
+      - name: Run pipeline job
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        run: databricks bundle run mle_pipeline_job --target dev

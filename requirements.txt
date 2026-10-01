@@ -1,3 +1,38 @@
-# External dependencies (not pre-installed in Databricks Runtime)
-# Pre-installed packages (pyspark, mlflow, scikit-learn, pandas, numpy, pyyaml) are not listed here.
+# ===========================================================================
+# Python dependencies for the MLE Supply Chain Pipeline
+# ===========================================================================
+# Used by: pip install -r requirements.txt (local dev) and the DAB bundle
+#         databricks.yaml (job execution on Databricks).
+#
+# ALL dependencies needed by the Python files (meadallion_pipeline.py,
+# ml_pipeline.py, main.py), including packages pre-installed on Databricks
+# Runtime. Listed here so the project is fully reproducible outside
+# Databricks (e.g., local development, CI environments).
+#
+# Pre-installed on Databricks Runtime (marked [pre-installed] below):
+#   pyspark, mlflow, scikit-learn, pandas, numpy, pyyaml, matplotlib,
+#   databricks-sdk
+# ===========================================================================
+
+# --- Config / data processing ---
+pyyaml                       # [pre-installed] YAML config file parsing (dev.yaml)
+pyspark                      # [pre-installed] Spark session, DataFrame ops, SQL functions
+
+# --- Databricks SDK ---
+databricks-sdk               # [pre-installed] dbutils.widgets, runtime access
+
+# --- ML experiment tracking & model registry ---
+mlflow                       # [pre-installed] Experiment tracking, model logging, registry
+
+# --- Numerical computing ---
+numpy                        # [pre-installed] Array math, sqrt, isnan, isinf
+pandas                       # [pre-installed] DataFrame ops (toPandas, merges)
+
+# --- Machine learning ---
+scikit-learn                 # [pre-installed] Pipeline, ColumnTransformer, LinearRegression, metrics
+
+# --- Visualization (used in evaluate() for residual plots) ---
+matplotlib                   # [pre-installed] Actual-vs-predicted, residuals, histogram plots
+
+# --- Databricks Feature Store (NOT pre-installed on Databricks Runtime) ---
 databricks-feature-engineering

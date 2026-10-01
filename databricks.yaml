@@ -1,0 +1,53 @@
+# ===========================================================================
+# Databricks Asset Bundle — MLE Supply Chain Pipeline
+# ===========================================================================
+# Deploys the pipeline as a Databricks Job (spark_python_task) that runs
+# main.py with a --config-file parameter.
+#
+# Usage:
+#   databricks bundle validate --target dev
+#   databricks bundle deploy  --target dev
+#   databricks bundle run     mle_pipeline_job --target dev
+#
+# CI/CD: .github/workflows/cd.yaml runs these commands on push to main.
+#
+# Libraries (explicitly listed for reproducibility):
+#   - databricks-feature-engineering: NOT pre-installed on Databricks Runtime.
+#   - scikit-learn: pre-installed, but listed for explicit dependency tracking.
+#   - pyspark, mlflow, pandas, numpy, pyyaml, matplotlib, databricks-sdk:
+#     pre-installed (see requirements.txt for the full list).
+# ===========================================================================
+
+bundle:
+  name: mle-pipeline
+
+variables:
+  config_file:
+    description: "Path to the environment config YAML file"
+
+resources:
+  jobs:
+    mle_pipeline_job:
+      name: "MLE Pipeline - DE + ML"
+
+      tasks:
+        - task_key: run_pipeline
+          spark_python_task:
+            python_file: /Workspace/Users/girija.zirange@bizmetric.com/MLE/src/main.py
+            parameters:
+              - "--config-file"
+              - ${var.config_file}
+          libraries:
+            - pypi: databricks-feature-engineering
+            - pypi: scikit-learn
+
+targets:
+  dev:
+    mode: development
+    variables:
+      config_file: /Workspace/Users/girija.zirange@bizmetric.com/MLE/config/dev.yaml
+
+  prod:
+    mode: production
+    variables:
+      config_file: /Workspace/Users/girija.zirange@bizmetric.com/MLE/config/prod.yaml

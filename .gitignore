@@ -1,7 +1,43 @@
-# MLflow experiment artifacts (stored in workspace, not source code)
-demand_forecasting/
+# ===========================================================================
+# Databricks / Python .gitignore
+# ===========================================================================
 
-# Python artifacts
+# --- MLflow experiment artifacts (stored in workspace, not source code) ---
+# No trailing slash — demand_forecasting is a workspace object, not a regular directory.
+# git fails with "Operation not supported" if it tries to open it.
+demand_forecasting
+mlruns
+mlartifacts
+
+# --- Python artifacts ---
 __pycache__/
 *.pyc
+*.pyo
 *.egg-info/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# --- Databricks CLI / DAB local state ---
+.databricks/
+
+# --- Virtual environments ---
+venv/
+.venv/
+env/
+
+# --- IDE / Editor ---
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# --- OS ---
+.DS_Store
+Thumbs.db
+
+# --- Secrets / credentials ---
+.env
+*.key
+*.pem
