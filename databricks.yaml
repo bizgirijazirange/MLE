@@ -27,19 +27,27 @@ variables:
 
 resources:
   jobs:
-    mle_pipeline_job:
-      name: "MLE Pipeline - DE + ML"
-
+    MLE_pipeline:
+      name: MLE_pipeline
       tasks:
-        - task_key: run_pipeline
+        - task_key: entry_point
           spark_python_task:
             python_file: /Workspace/Users/girija.zirange@bizmetric.com/MLE/src/main.py
-            parameters:
-              - "--config-file"
-              - ${var.config_file}
-          libraries:
-            - pypi: databricks-feature-engineering
-            - pypi: scikit-learn
+          environment_key: entry_point_environment
+      queue:
+        enabled: true
+      environments:
+        - environment_key: Default
+          spec:
+            environment_version: "6"
+        - environment_key: entry_point_environment
+          spec:
+            dependencies:
+              - databricks
+              - databricks-feature-engineering
+            environment_version: "6"
+      performance_target: PERFORMANCE_OPTIMIZED
+
 
 targets:
   dev:
