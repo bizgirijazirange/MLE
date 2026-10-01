@@ -7,7 +7,7 @@
 # Usage:
 #   databricks bundle validate --target dev
 #   databricks bundle deploy  --target dev
-#   databricks bundle run     mle_pipeline_job --target dev
+#   databricks bundle run     MLE_pipeline --target dev
 #
 # CI/CD: .github/workflows/cd.yaml runs these commands on push to main.
 #

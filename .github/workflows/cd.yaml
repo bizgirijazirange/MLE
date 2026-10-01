@@ -54,4 +54,4 @@ jobs:
 
       - name: Run pipeline job
         if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
-        run: databricks bundle run mle_pipeline_job --target dev
+        run: databricks bundle run MLE_pipeline --target dev
