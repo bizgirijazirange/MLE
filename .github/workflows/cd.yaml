@@ -41,9 +41,7 @@ jobs:
 
       # --- Install Databricks CLI ---
       - name: Install Databricks CLI
-        run: |
-          curl -fsSL https://raw.githubusercontent.com/databricks/cli/main/install.sh | sh
-          echo "$HOME/bin" >> $GITHUB_PATH
+        uses: databricks/setup-cli@main
 
       # --- Validate bundle (always runs — PR and push) ---
       - name: Validate bundle (dev)
