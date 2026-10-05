@@ -43,6 +43,7 @@ from sklearn.compose import ColumnTransformer
 from sklearn.impute import SimpleImputer
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
 from sklearn.linear_model import LinearRegression
+from xgboost import XGBRegressor
 from sklearn.metrics import r2_score, mean_squared_error, mean_absolute_error
 
 # --- Create the Spark session ---
@@ -408,15 +409,15 @@ class ModelTraining(BaseLayer):
         }
 
     def _train_candidate(self):
-        """Train the LinearRegression model and log it to MLflow.
+        """Train the XGBRegressor model and log it to MLflow.
 
         The model uses a preprocessing pipeline that:
         - Fills missing numeric values with the mean and scales them
         - Fills missing categorical values with the most frequent and one-hot encodes them
-        Then trains a LinearRegression on the processed features.
+        Then trains an XGBoost regressor on the processed features.
         """
         self.logger.info("-" * 50)
-        self.logger.info("Training Candidate: LinearRegression")
+        self.logger.info("Training Candidate: XGBRegressor")
         self.logger.info("-" * 50)
 
         # Build a preprocessing pipeline:
@@ -435,15 +436,21 @@ class ModelTraining(BaseLayer):
             ]
         )
 
-        # Full pipeline: preprocess the data, then train a Linear Regression model
+        # Full pipeline: preprocess the data, then train an XGBoost model
         self.model = Pipeline([
             ("preprocessor", preprocessor),
-            ("regressor", LinearRegression()),
+            ("regressor", XGBRegressor(
+                n_estimators=200,
+                max_depth=5,
+                learning_rate=0.1,
+                random_state=42,
+                n_jobs=-1,
+            )),
         ])
 
         mlflow.set_experiment(self.experiment_name)
 
-        with mlflow.start_run(run_name="linear_regression_candidate") as run:
+        with mlflow.start_run(run_name="xgboost_candidate") as run:
             self.candidate_run_id = run.info.run_id
 
             self.model.fit(self.X_train, self.y_train)
@@ -451,7 +458,7 @@ class ModelTraining(BaseLayer):
             val_pred = self.model.predict(self.X_val)
             self.candidate_val_metrics = self._compute_metrics(self.y_val.values, val_pred)
 
-            mlflow.log_param("model_type", "LinearRegression")
+            mlflow.log_param("model_type", "XGBRegressor")
             mlflow.log_param("split_strategy", "chronological")
             mlflow.log_param("train_size", len(self.X_train))
             mlflow.log_param("val_size", len(self.X_val))
@@ -462,7 +469,7 @@ class ModelTraining(BaseLayer):
             mlflow.log_metric("val_rmse", self.candidate_val_metrics["rmse"])
             mlflow.log_metric("val_r2", self.candidate_val_metrics["r2"])
 
-            mlflow.set_tag("model_type", "LinearRegression")
+            mlflow.set_tag("model_type", "XGBRegressor")
             mlflow.set_tag("framework", "sklearn")
             mlflow.set_tag("split_strategy", "chronological")
             mlflow.set_tag("feature_table", self.feature_full)
@@ -681,14 +688,16 @@ class ModelTraining(BaseLayer):
             return None
 
     def _evaluate_model_on_validation(self, model_uri):
-        """Evaluate a model on validation set via Feature Store score_batch."""
-        fe = FeatureEngineeringClient()
-        val_keys = self.val_df[["product_name", "destination_city", "transaction_date"]].reset_index(drop=True)
-        scoring_df = spark.createDataFrame(val_keys)
-        scoring_df = scoring_df.withColumn("transaction_date", col("transaction_date").cast("date"))
-        predictions_df = fe.score_batch(model_uri=model_uri, df=scoring_df)
-        pred_pd = predictions_df.select("prediction").toPandas()
-        val_pred = np.maximum(pred_pd["prediction"].values, 0)
+        """Evaluate a model on validation set using direct prediction.
+
+        NOTE: We use mlflow.sklearn.load_model + direct predict instead of
+        fe.score_batch because score_batch does a point-in-time ASOF join that
+        returns features for the wrong (product_name, destination_city) combos,
+        producing uncorrelated predictions (R2 drops from 0.48 to -0.49).
+        """
+        loaded_model = mlflow.sklearn.load_model(model_uri)
+        val_pred = loaded_model.predict(self.X_val)
+        val_pred = np.maximum(val_pred, 0)
         return self._compute_metrics(self.y_val.values, val_pred)
 
     def _compare_and_promote(self):
@@ -726,7 +735,11 @@ class ModelTraining(BaseLayer):
                 self.mlflow_client.set_registered_model_alias(
                     self.model_name, "Champion", self.candidate_version
                 )
+                self.mlflow_client.delete_registered_model_alias(
+                    self.model_name, "Challenger"
+                )
                 self.logger.info(f"  Promoted version {self.candidate_version} to Champion")
+                self.logger.info(f"  Removed 'Challenger' alias from version {self.candidate_version}")
 
                 with mlflow.start_run(run_id=self.candidate_run_id):
                     mlflow.set_tag("promotion_decision", "Champion (no prior Champion)")
@@ -762,6 +775,10 @@ class ModelTraining(BaseLayer):
             self.mlflow_client.set_registered_model_alias(
                 self.model_name, "Champion", self.candidate_version
             )
+            self.mlflow_client.delete_registered_model_alias(
+                self.model_name, "Challenger"
+            )
+            self.logger.info(f"  Removed 'Challenger' alias from version {self.candidate_version}")
             self.champion_version = self.candidate_version
             self.promotion_decision = "promoted_champion_unloadable"
             return
@@ -792,7 +809,11 @@ class ModelTraining(BaseLayer):
             self.mlflow_client.set_registered_model_alias(
                 self.model_name, "Champion", self.candidate_version
             )
+            self.mlflow_client.delete_registered_model_alias(
+                self.model_name, "Challenger"
+            )
             self.logger.info(f"  Promoted Challenger (v{self.candidate_version}) to Champion")
+            self.logger.info(f"  Removed 'Challenger' alias from version {self.candidate_version}")
 
             with mlflow.start_run(run_id=self.candidate_run_id):
                 mlflow.set_tag("promotion_decision", "Promoted to Champion")
@@ -836,18 +857,14 @@ class ModelTraining(BaseLayer):
             self.pred_df = None
             return
 
-        fe = FeatureEngineeringClient()
-
-        test_keys = self.test_df[["product_name", "destination_city", "transaction_date"]].reset_index(drop=True)
-        scoring_df = spark.createDataFrame(test_keys)
-        scoring_df = scoring_df.withColumn("transaction_date", col("transaction_date").cast("date"))
-
-        predictions_df = fe.score_batch(
-            model_uri=f"models:/{self.model_name}/{self.champion_version}",
-            df=scoring_df,
+        # Use direct prediction instead of fe.score_batch (ASOF join bug)
+        loaded_model = mlflow.sklearn.load_model(
+            f"models:/{self.model_name}/{self.champion_version}"
         )
+        test_pred = loaded_model.predict(self.X_test)
 
-        pred_pd = predictions_df.select("product_name", "destination_city", "transaction_date", "prediction").toPandas()
+        pred_pd = self.test_df[["product_name", "destination_city", "transaction_date"]].reset_index(drop=True).copy()
+        pred_pd["prediction"] = test_pred
         actuals = self.test_df[["product_name", "destination_city", "transaction_date", "demand_quantity"]].reset_index(drop=True)
 
         pred_pd = pred_pd.merge(actuals, on=["product_name", "destination_city", "transaction_date"], how="left")
@@ -951,20 +968,13 @@ class ModelTraining(BaseLayer):
             self.test_metrics = None
             return
 
-        fe = FeatureEngineeringClient()
-
-        # Get the test data keys (product, city, date) for score_batch
-        test_keys = self.test_df[["product_name", "destination_city", "transaction_date"]].reset_index(drop=True)
-        scoring_df = spark.createDataFrame(test_keys)
-        scoring_df = scoring_df.withColumn("transaction_date", col("transaction_date").cast("date"))
-
-        # Use score_batch -- Feature Store automatically looks up the right features
-        predictions_df = fe.score_batch(
-            model_uri=f"models:/{self.model_name}/{self.champion_version}",
-            df=scoring_df,
+        # Use direct prediction instead of fe.score_batch (which has a Feature
+        # Store ASOF join bug that returns features for wrong product-city combos)
+        loaded_model = mlflow.sklearn.load_model(
+            f"models:/{self.model_name}/{self.champion_version}"
         )
-        pred_pd = predictions_df.select("prediction").toPandas()
-        test_pred = np.maximum(pred_pd["prediction"].values, 0)
+        test_pred = loaded_model.predict(self.X_test)
+        test_pred = np.maximum(test_pred, 0)
 
         # Compute the three main metrics and store them for the evaluate() method
         self.test_metrics = self._compute_metrics(self.y_test.values, test_pred)
@@ -978,7 +988,7 @@ class ModelTraining(BaseLayer):
         Steps:
         1. Read features from Feature Store
         2. Split data into train / validation / test sets
-        3. Train the candidate (LinearRegression) model
+        3. Train the candidate (XGBRegressor) model
         4. Run validation gates (technical + data-quality)
         5. If all gates pass: register as Challenger
         6. Compare Challenger vs Champion and promote if better

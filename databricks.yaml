@@ -1,21 +1,12 @@
 # ===========================================================================
 # Databricks Asset Bundle — MLE Supply Chain Pipeline
 # ===========================================================================
-# Deploys the pipeline as a Databricks Job (spark_python_task) that runs
-# main.py with a --config-file parameter.
-#
 # Usage:
 #   databricks bundle validate --target dev
 #   databricks bundle deploy  --target dev
 #   databricks bundle run     MLE_pipeline --target dev
 #
 # CI/CD: .github/workflows/cd.yaml runs these commands on push to main.
-#
-# Libraries (explicitly listed for reproducibility):
-#   - databricks-feature-engineering: NOT pre-installed on Databricks Runtime.
-#   - scikit-learn: pre-installed, but listed for explicit dependency tracking.
-#   - pyspark, mlflow, pandas, numpy, pyyaml, matplotlib, databricks-sdk:
-#     pre-installed (see requirements.txt for the full list).
 # ===========================================================================
 
 bundle:
@@ -45,6 +36,7 @@ resources:
             dependencies:
               - databricks
               - databricks-feature-engineering
+              - xgboost
             environment_version: "6"
       performance_target: PERFORMANCE_OPTIMIZED
 

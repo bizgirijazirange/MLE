@@ -29,7 +29,8 @@ numpy                        # [pre-installed] Array math, sqrt, isnan, isinf
 pandas                       # [pre-installed] DataFrame ops (toPandas, merges)
 
 # --- Machine learning ---
-scikit-learn                 # [pre-installed] Pipeline, ColumnTransformer, LinearRegression, metrics
+scikit-learn                 # [pre-installed] Pipeline, ColumnTransformer, preprocessing, metrics
+xgboost                      # XGBRegressor — gradient-boosted trees for demand forecasting
 
 # --- Visualization (used in evaluate() for residual plots) ---
 matplotlib                   # [pre-installed] Actual-vs-predicted, residuals, histogram plots
