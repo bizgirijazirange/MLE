@@ -174,11 +174,14 @@ class FeatureEngineering(BaseLayer):
         self.logger.info("Adding rolling window features...")
         rolling_window = self.layer_cfg["features"]["rolling_window"]
         rolling_columns = self.layer_cfg["features"]["rolling_columns"]
+        # Trailing window that EXCLUDES the current row to prevent data
+        # leakage — demand_quantity is the prediction target, so the
+        # current row's value must not appear in its own rolling features.
         w = (
             Window
             .partitionBy("product_name", "destination_city")
             .orderBy("transaction_date")
-            .rowsBetween(-(rolling_window - 1), 0)
+            .rowsBetween(-rolling_window, -1)
         )
 
         for col_name in rolling_columns:
@@ -353,7 +356,7 @@ class ModelTraining(BaseLayer):
         self.logger.info(f"Features: {self.df.shape[0]:,} rows, {self.df.shape[1]} columns")
 
         if "is_weekend" in self.df.columns:
-            self.df["is_weekend"] = self.df["is_weekend"].astype(int)
+            self.df["is_weekend"] = self.df["is_weekend"].astype("int32")
 
         self.df["transaction_date"] = pd.to_datetime(self.df["transaction_date"])
         self.df = self.df.sort_values("transaction_date").reset_index(drop=True)
@@ -364,6 +367,11 @@ class ModelTraining(BaseLayer):
             if c not in exclude + self.categorical_features
         ]
         self.feature_cols = self.categorical_features + self.numerical_features
+        # transaction_date is included as the Feature Store timestamp key for
+        # fe.score_batch lookups, NOT as a predictive feature.  The
+        # ColumnTransformer in _train_candidate does not include it in any
+        # transformer, so remainder='drop' discards it before modelling.
+        self.input_cols = ["transaction_date"] + self.feature_cols
         self.logger.info(f"Target: {self.target} | Features: {len(self.feature_cols)} ({len(self.categorical_features)} cat, {len(self.numerical_features)} num)")
 
     def split_data(self):
@@ -382,11 +390,11 @@ class ModelTraining(BaseLayer):
         self.val_df = self.df.iloc[idx_val_start:idx_test_start].copy()
         self.test_df = self.df.iloc[idx_test_start:].copy()
 
-        self.X_train = self.train_df[self.feature_cols].copy()
+        self.X_train = self.train_df[self.input_cols].copy()
         self.y_train = self.train_df[self.target].copy()
-        self.X_val = self.val_df[self.feature_cols].copy()
+        self.X_val = self.val_df[self.input_cols].copy()
         self.y_val = self.val_df[self.target].copy()
-        self.X_test = self.test_df[self.feature_cols].copy()
+        self.X_test = self.test_df[self.input_cols].copy()
         self.y_test = self.test_df[self.target].copy()
 
         self.logger.info(f"Train: {len(self.X_train):,} | Val: {len(self.X_val):,} | Test: {len(self.X_test):,}")
@@ -688,17 +696,36 @@ class ModelTraining(BaseLayer):
             return None
 
     def _evaluate_model_on_validation(self, model_uri):
-        """Evaluate a model on validation set using direct prediction.
+        """Evaluate a registered model on the validation set via fe.score_batch.
 
-        NOTE: We use mlflow.sklearn.load_model + direct predict instead of
-        fe.score_batch because score_batch does a point-in-time ASOF join that
-        returns features for the wrong (product_name, destination_city) combos,
-        producing uncorrelated predictions (R2 drops from 0.48 to -0.49).
+        Uses the Feature Store score_batch API with the actual model_uri so
+        that the model is fetched from the MLflow registry on each executor.
+        This is the serverless-compatible path: only entity columns (primary
+        keys + timestamp key) are passed; score_batch looks up features from
+        the Feature Store and scores the model in a single call.
         """
-        loaded_model = mlflow.sklearn.load_model(model_uri)
-        val_pred = loaded_model.predict(self.X_val)
-        val_pred = np.maximum(val_pred, 0)
-        return self._compute_metrics(self.y_val.values, val_pred)
+        fe = FeatureEngineeringClient()
+        entity_cols = ["product_name", "destination_city", "transaction_date"]
+        entity_df = spark.createDataFrame(self.val_df[entity_cols])
+        entity_df = entity_df.withColumn("transaction_date", col("transaction_date").cast("date"))
+
+        self.logger.info(f"score_batch validation scoring -- model_uri: {model_uri}")
+        scored_df = fe.score_batch(model_uri=model_uri, df=entity_df)
+        scored_pd = scored_df.toPandas()
+
+        # Merge predictions with actuals to guarantee row alignment
+        result = scored_pd.merge(
+            self.val_df[entity_cols + ["demand_quantity"]],
+            on=entity_cols,
+            how="inner",
+        )
+        val_pred = np.maximum(result["prediction"].values, 0)
+        metrics = self._compute_metrics(result["demand_quantity"].values, val_pred)
+        self.logger.info(
+            f"  Validation metrics -- MAE: {metrics['mae']:.2f}, "
+            f"RMSE: {metrics['rmse']:.2f}, R2: {metrics['r2']:.4f}"
+        )
+        return metrics
 
     def _compare_and_promote(self):
         """Compare the Challenger model against the current Champion.
@@ -715,9 +742,12 @@ class ModelTraining(BaseLayer):
         self.logger.info("-" * 50)
 
         champion_version = self._get_champion_version()
+        candidate_uri = f"models:/{self.model_name}/{self.candidate_version}"
+        self.logger.info(f"Candidate model URI: {candidate_uri}")
 
         if champion_version is None:
             self.logger.info("No existing Champion -- evaluating candidate for direct promotion")
+            self.logger.info(f"Candidate MAE: {self.candidate_val_metrics['mae']:.2f}")
 
             passes = (
                 self.candidate_val_metrics["r2"] >= self.min_r2 and
@@ -749,6 +779,7 @@ class ModelTraining(BaseLayer):
 
                 self.champion_version = self.candidate_version
                 self.promotion_decision = "promoted_new_champion"
+                self.logger.info(f"Promotion decision: PROMOTED (v{self.candidate_version} -> Champion, no prior Champion)")
             else:
                 self.logger.error(f"  FAIL -- Candidate does not meet absolute thresholds")
                 self.logger.error(f"  Required: R2 >= {self.min_r2}, MAE <= {self.max_mae}, RMSE <= {self.max_rmse}")
@@ -762,26 +793,22 @@ class ModelTraining(BaseLayer):
 
                 self.champion_version = None
                 self.promotion_decision = "rejected"
+                self.logger.info(f"Promotion decision: REJECTED (candidate failed absolute thresholds)")
             return
 
         self.logger.info(f"Existing Champion: version {champion_version}")
 
         champion_uri = f"models:/{self.model_name}/{champion_version}"
-        try:
-            champion_metrics = self._evaluate_model_on_validation(champion_uri)
-        except Exception as e:
-            self.logger.warning(f"Could not load Champion v{champion_version}: {e}")
-            self.logger.info("Treating candidate as new Champion (Champion model not loadable)")
-            self.mlflow_client.set_registered_model_alias(
-                self.model_name, "Champion", self.candidate_version
-            )
-            self.mlflow_client.delete_registered_model_alias(
-                self.model_name, "Challenger"
-            )
-            self.logger.info(f"  Removed 'Challenger' alias from version {self.candidate_version}")
-            self.champion_version = self.candidate_version
-            self.promotion_decision = "promoted_champion_unloadable"
-            return
+        candidate_uri = f"models:/{self.model_name}/{self.candidate_version}"
+        self.logger.info(f"Champion model URI:  {champion_uri}")
+        self.logger.info(f"Candidate model URI: {candidate_uri}")
+
+        # Evaluate the Champion on the validation set.  If this fails the
+        # pipeline MUST fail — we never silently promote the candidate when
+        # the Champion cannot be evaluated.
+        champion_metrics = self._evaluate_model_on_validation(champion_uri)
+        self.logger.info(f"Champion MAE:  {champion_metrics['mae']:.2f}")
+        self.logger.info(f"Candidate MAE: {self.candidate_val_metrics['mae']:.2f}")
 
         cand = self.candidate_val_metrics
         champ = champion_metrics
@@ -826,6 +853,7 @@ class ModelTraining(BaseLayer):
 
             self.champion_version = self.candidate_version
             self.promotion_decision = "promoted"
+            self.logger.info(f"Promotion decision: PROMOTED (v{self.candidate_version} -> Champion)")
         else:
             self.logger.info("  FAIL -- Challenger does not outperform Champion")
             self.logger.info(f"  Keeping existing Champion (version {champion_version})")
@@ -840,6 +868,7 @@ class ModelTraining(BaseLayer):
 
             self.champion_version = champion_version
             self.promotion_decision = "champion_retained"
+            self.logger.info(f"Promotion decision: CHAMPION RETAINED (v{champion_version} stays Champion)")
 
     def predict(self):
         """Make production predictions using the Champion model.
@@ -857,24 +886,31 @@ class ModelTraining(BaseLayer):
             self.pred_df = None
             return
 
-        # Use direct prediction instead of fe.score_batch (ASOF join bug)
-        loaded_model = mlflow.sklearn.load_model(
-            f"models:/{self.model_name}/{self.champion_version}"
+        champion_uri = f"models:/{self.model_name}/{self.champion_version}"
+        self.logger.info(f"Champion model URI: {champion_uri}")
+
+        fe = FeatureEngineeringClient()
+        entity_cols = ["product_name", "destination_city", "transaction_date"]
+        entity_df = spark.createDataFrame(self.test_df[entity_cols])
+        entity_df = entity_df.withColumn("transaction_date", col("transaction_date").cast("date"))
+
+        self.logger.info("Scoring production predictions with fe.score_batch ...")
+        scored_df = fe.score_batch(model_uri=champion_uri, df=entity_df)
+        scored_pd = scored_df.toPandas()
+
+        # Merge predictions with actuals
+        result = scored_pd.merge(
+            self.test_df[entity_cols + ["demand_quantity"]],
+            on=entity_cols,
+            how="inner",
         )
-        test_pred = loaded_model.predict(self.X_test)
-
-        pred_pd = self.test_df[["product_name", "destination_city", "transaction_date"]].reset_index(drop=True).copy()
-        pred_pd["prediction"] = test_pred
-        actuals = self.test_df[["product_name", "destination_city", "transaction_date", "demand_quantity"]].reset_index(drop=True)
-
-        pred_pd = pred_pd.merge(actuals, on=["product_name", "destination_city", "transaction_date"], how="left")
 
         self.pred_df = pd.DataFrame({
-            "product_name": pred_pd["product_name"],
-            "destination_city": pred_pd["destination_city"],
-            "transaction_date": pred_pd["transaction_date"],
-            "actual_demand": pred_pd["demand_quantity"],
-            "predicted_demand": np.maximum(pred_pd["prediction"].values, 0),
+            "product_name": result["product_name"],
+            "destination_city": result["destination_city"],
+            "transaction_date": result["transaction_date"],
+            "actual_demand": result["demand_quantity"],
+            "predicted_demand": np.maximum(result["prediction"].values, 0),
             "model_name": self.model_name,
             "model_version": str(self.champion_version),
             "mlflow_run_id": self.candidate_run_id,
@@ -968,17 +1004,29 @@ class ModelTraining(BaseLayer):
             self.test_metrics = None
             return
 
-        # Use direct prediction instead of fe.score_batch (which has a Feature
-        # Store ASOF join bug that returns features for wrong product-city combos)
-        loaded_model = mlflow.sklearn.load_model(
-            f"models:/{self.model_name}/{self.champion_version}"
+        champion_uri = f"models:/{self.model_name}/{self.champion_version}"
+        self.logger.info(f"Champion model URI: {champion_uri}")
+
+        fe = FeatureEngineeringClient()
+        entity_cols = ["product_name", "destination_city", "transaction_date"]
+        entity_df = spark.createDataFrame(self.test_df[entity_cols])
+        entity_df = entity_df.withColumn("transaction_date", col("transaction_date").cast("date"))
+
+        self.logger.info("Scoring test set with fe.score_batch ...")
+        scored_df = fe.score_batch(model_uri=champion_uri, df=entity_df)
+        scored_pd = scored_df.toPandas()
+
+        # Merge predictions with actuals to guarantee row alignment
+        result = scored_pd.merge(
+            self.test_df[entity_cols + ["demand_quantity"]],
+            on=entity_cols,
+            how="inner",
         )
-        test_pred = loaded_model.predict(self.X_test)
-        test_pred = np.maximum(test_pred, 0)
+        test_pred = np.maximum(result["prediction"].values, 0)
 
-        # Compute the three main metrics and store them for the evaluate() method
-        self.test_metrics = self._compute_metrics(self.y_test.values, test_pred)
+        self.test_metrics = self._compute_metrics(result["demand_quantity"].values, test_pred)
 
+        self.logger.info(f"  Final test MAE: {self.test_metrics['mae']:.2f}")
         self.logger.info(f"  Test metrics -- MAE: {self.test_metrics['mae']:.2f}, "
                          f"RMSE: {self.test_metrics['rmse']:.2f}, R2: {self.test_metrics['r2']:.4f}")
 

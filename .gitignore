@@ -6,6 +6,7 @@
 # No trailing slash — demand_forecasting is a workspace object, not a regular directory.
 # git fails with "Operation not supported" if it tries to open it.
 demand_forecasting
+test_sklearn_log
 mlruns
 mlartifacts
 
