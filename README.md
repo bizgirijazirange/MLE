@@ -2,7 +2,7 @@
 
 ## Architecture
 
-The project lives at `/Workspace/Users/girija.zirange@bizmetric.com/MLE/` and is a full-stack data + ML pipeline on Databricks that forecasts product-city-level demand. It follows two architectural principles:
+ This project is a full-stack data + ML pipeline on Databricks that forecasts product-city-level demand. It follows two architectural principles:
 
 * **OOP class-based design** — all logic lives in importable `.py` modules with `BaseLayer` as the shared parent class (config loading, logging, schema creation)
 * **Single source of truth** — class definitions live in `.py` files; notebooks are thin wrappers that import and call `.run()` methods

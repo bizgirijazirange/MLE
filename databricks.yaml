@@ -19,7 +19,7 @@ variables:
 resources:
   jobs:
     MLE_pipeline:
-      name: MLE_pipeline
+      name: MLE_pipeline_new
       tasks:
         - task_key: entry_point
           spark_python_task:
@@ -36,6 +36,7 @@ resources:
             dependencies:
               - databricks
               - databricks-feature-engineering
+              - scikit-learn
               - xgboost
             environment_version: "6"
       performance_target: PERFORMANCE_OPTIMIZED

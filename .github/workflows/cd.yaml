@@ -24,7 +24,7 @@ on:
   pull_request:
     branches:
       - main
-  workflow_dispatch:  # Allow manual triggering from the Actions tab
+  
 
 jobs:
   validate-and-deploy:
