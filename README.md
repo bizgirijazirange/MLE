@@ -1,240 +1,138 @@
-# MLE Supply Chain Pipeline — Declarative Automation Bundle (DAB)
+# MLE Supply Chain Demand Forecasting Pipeline
 
-## What is a Declarative Automation Bundle (DAB)?
+## Architecture
 
-A **DAB** (formerly "Databricks Asset Bundle") is Databricks' source-control-first
-framework for defining, deploying, and managing data and ML pipelines as code.
+The project lives at `/Workspace/Users/girija.zirange@bizmetric.com/MLE/` and is a full-stack data + ML pipeline on Databricks that forecasts product-city-level demand. It follows two architectural principles:
 
-Instead of manually configuring jobs in the Databricks UI, you describe your
-infrastructure — jobs, pipelines, notebooks, variables, and environment-specific
-settings — in a `databricks.yaml` file at the root of your Git repository.
-DAB handles syncing source code to the workspace, resolving environment-specific
-variables, and creating/updating Databricks resources on every deploy.
+* **OOP class-based design** — all logic lives in importable `.py` modules with `BaseLayer` as the shared parent class (config loading, logging, schema creation)
+* **Single source of truth** — class definitions live in `.py` files; notebooks are thin wrappers that import and call `.run()` methods
 
-### Key benefits
+## Key Files
 
-* **Infrastructure as code** — every job, cluster, and variable lives in YAML,
-  version-controlled alongside your Python source.
-* **Environment targets** — define `dev`, `staging`, `prod` targets with different
-  workspace paths, variables, and permissions in a single file.
-* **Git-based CI/CD** — push to `main` and a GitHub Actions workflow automatically
-  validates, deploys, and runs the pipeline. No manual UI steps.
-* **Idempotent deploys** — `databricks bundle deploy` creates or updates the job
-  in-place; re-running it does not create duplicates.
-* **Variable substitution** — use `${var.config_file}`, `${workspace.root_path}`,
-  `${bundle.name}`, `${workspace.current_user.name}` to keep configs DRY.
-
----
-
-## Project Structure
-
-```
-MLE/                         ← Git repo root (DAB bundle root)
-├── databricks.yaml          ← DAB bundle definition (this file is the "source of truth")
-├── README.md                ← This file
-├── requirements.txt          ← Python dependencies (for reference)
-├── .gitignore               ← Git ignore patterns (also respected by DAB sync)
-├── config/
-│   └── dev.yaml             ← Environment config (catalog, schemas, pipeline settings)
-├── src/
-│   ├── main.py              ← Orchestrator entry point (run by the DAB job)
-│   ├── meadallion_pipeline.py  ← DE classes: BronzeIngestion, SilverIngestion, GoldIngestion
-│   ├── ml_pipeline.py       ← ML classes: FeatureEngineering, ModelTraining
-│   └── exploratory_data_analysis  ← EDA notebook
-├── .github/
-│   └── workflows/
-│       └── cd.yaml          ← GitHub Actions CI/CD pipeline
-└── .bundle/                 ← (generated on deploy — not committed)
-```
-
-### Execution flow
-
-```
-main.py
-  │
-  ├── Stage 1: Data Engineering
-  │     ├── BronzeIngestion.run()   — CSV → Bronze Delta table
-  │     ├── SilverIngestion.run()   — Bronze → Silver (dedup + DQ + quarantine)
-  │     └── GoldIngestion.run()     — Silver → Gold (aggregated to product-city-date grain)
-  │
-  └── Stage 2: Machine Learning
-        ├── FeatureEngineering.run()  — Gold → Feature Store (lag, rolling, calendar features)
-        └── ModelTraining.run()       — Train → Register → Predict (LinearRegression + MLflow)
-```
-
----
-
-## How `databricks.yaml` Works
-
-### Variables
-
-```yaml
-variables:
-  config_file:
-    description: Workspace path to the environment config YAML file
-    default: ""
-```
-
-The `config_file` variable is set per target (see below).  `main.py` receives it
-as a `--config-file` command-line argument via the `spark_python_task.parameters`
-field.  No Databricks widgets are used.
-
-### Job definition
-
-```yaml
-resources:
-  jobs:
-    mle_pipeline_job:
-      tasks:
-        - task_key: run_pipeline
-          spark_python_task:
-            python_file: ${workspace.root_path}/src/main.py
-            parameters:
-              - --config-file
-              - ${var.config_file}
-          libraries:
-            - pypi:
-                package: databricks-feature-engineering
-```
-
-* `python_file` — resolved to the workspace-synced path of `src/main.py`.
-* `parameters` — passed as `sys.argv` to `main.py`; `argparse` reads `--config-file`.
-* `libraries` — pip packages installed on the job cluster at run time.
-
-### Targets
-
-```yaml
-targets:
-  dev:
-    mode: development
-    workspace:
-      root_path: /Workspace/Users/${workspace.current_user.name}/.bundle/${bundle.name}
-    variables:
-      config_file: ${workspace.root_path}/config/dev.yaml
-
-  prod:
-    mode: production
-    workspace:
-      root_path: /Workspace/Shared/.bundle/${bundle.name}
-    variables:
-      config_file: ${workspace.root_path}/config/prod.yaml
-```
-
-Each target:
-
-* `mode: development` — allows local overrides; `mode: production` enforces stricter rules.
-* `workspace.root_path` — where DAB syncs your source files in the Databricks workspace.
-* `variables.config_file` — the workspace path to the YAML config for that environment.
-
----
-
-## Prerequisites
-
-### 1. Install the Databricks CLI (v0.200+)
-
-```bash
-# macOS / Linux
-curl -fsSL https://raw.githubusercontent.com/databricks/cli/main/install.sh | sh
-
-# Verify
-databricks --version
-```
-
-### 2. Authenticate
-
-```bash
-# Option A: interactive OAuth (recommended for local dev)
-databricks auth login --host https://<your-workspace>.cloud.databricks.com
-
-# Option B: personal access token (PAT)
-export DATABRICKS_HOST=https://<your-workspace>.cloud.databricks.com
-export DATABRICKS_TOKEN=dapiXXXXXXXXXXXXXXXXXX
-```
-
-### 3. Create a prod config (optional)
-
-For the `prod` target, create `config/prod.yaml` with production-specific settings
-(catalog, schemas, source_path, model thresholds).  You can copy `dev.yaml` as a
-starting point and adjust the values.
-
----
-
-## Local Development Workflow
-
-```bash
-# 1. Validate the bundle (checks YAML syntax, variable resolution, etc.)
-databricks bundle validate --target dev
-
-# 2. Deploy to the dev workspace (creates/updates the Databricks Job)
-databricks bundle deploy --target dev
-
-# 3. Run the job manually
-databricks bundle run mle_pipeline_job --target dev
-
-# 4. Check job status in the Databricks UI or via CLI
-databricks jobs list --output JSON
-```
-
----
-
-## Git-Based Deployment (CI/CD)
-
-The `.github/workflows/cd.yaml` GitHub Actions workflow automates the entire
-deployment process:
-
-### Flow
-
-```
-Pull Request → main      →  databricks bundle validate --target dev   (dry-run only)
-Push to main              →  databricks bundle validate --target dev
-                          →  databricks bundle deploy   --target dev
-                          →  databricks bundle run mle_pipeline_job --target dev
-Manual trigger            →  same as push to main
-```
-
-### Required GitHub Secrets
-
-Go to your GitHub repo → **Settings** → **Secrets and variables** → **Actions** →
-**New repository secret** and add:
-
-| Secret Name | Value |
+| File | Role |
 | --- | --- |
-| `DATABRICKS_HOST` | Your workspace URL (e.g. `https://<workspace>.cloud.databricks.com`) |
-| `DATABRICKS_TOKEN` | A Databricks personal access token (PAT) or service-principal token |
+| `src/main.py` | Orchestrator entry point — runs DE then ML stages in sequence, used as the DAB job's `spark_python_task` |
+| `src/meadallion_pipeline.py` | Data engineering: `BronzeIngestion`, `SilverIngestion`, `GoldIngestion` |
+| `src/ml_pipeline.py` | ML pipeline: `FeatureEngineering`, `ModelTraining` |
+| `config/dev.yaml` | Single YAML config file — catalog, schemas, table names, feature params, model lifecycle thresholds |
+| `databricks.yaml` | Declarative Automation Bundle (DAB) — defines the job, compute, libraries, dev/prod targets |
+| `.github/workflows/cd.yaml` | GitHub Actions CI/CD — validate on PR, deploy+run on push to main |
 
-### Steps to enable
+## End-to-End Flow
 
-1. Commit all files (`databricks.yaml`, `src/main.py`, `.github/workflows/cd.yaml`, etc.) to your Git repo.
-2. Push to the `main` branch (or open a PR).
-3. GitHub Actions will automatically pick up the workflow.
-4. Check the **Actions** tab in GitHub to monitor the pipeline.
+### Stage 1: Data Engineering (Medallion Architecture)
 
-### Branching strategy (recommended)
+* **Bronze** (`BronzeIngestion`): Reads raw CSV from a Unity Catalog volume, writes 102,081 rows to `mle.bronze.supply_chain_dataset_bronze` with an audit timestamp column.
 
-```
-feature/*  →  PR to main  →  validate (dry-run)
-main       →  push         →  deploy to dev target
-tag v*.*.* →  (future)     →  deploy to prod target
-```
+* **Silver** (`SilverIngestion`): Reads Bronze, deduplicates on `transaction_id` (keeping latest by ingestion timestamp), applies type conversions, runs DQ validation (null checks on critical columns, `transaction_id` regex format validation, cross-field `delay_days_mismatch` rule). Good records → `mle.silver.supply_chain_dataset_silver` (100,000 rows), bad records → quarantine table. Adds audit timestamp.
 
----
+* **Gold** (`GoldIngestion`): Reads Silver, aggregates to the `(product_name, destination_city, transaction_date)` grain via SUM/AVG/COUNT DISTINCT. Excludes post-event columns to prevent target leakage. Writes 74,900 rows to `mle.gold.product_city_demand`.
 
-## DAB Commands Cheat Sheet
+### Stage 2: Machine Learning
 
-| Command | Description |
-| --- | --- |
-| `databricks bundle validate --target dev` | Validate bundle config (syntax, variables, permissions) |
-| `databricks bundle deploy --target dev` | Sync files + create/update Databricks resources |
-| `databricks bundle run mle_pipeline_job --target dev` | Trigger the job immediately |
-| `databricks bundle summary` | Show bundle overview (resources, variables, targets) |
-| `databricks bundle destroy --target dev` | Remove all resources created by the bundle |
+**Feature Engineering** (`FeatureEngineering`): Reads Gold, engineers three types of features:
 
----
+* **Calendar features**: `day_of_week`, `day_of_month`, `is_weekend`, `quarter` — derived from `transaction_date`
+* **Lag features**: `lag_1_demand`, `lag_7_demand` — `F.lag()` partitioned by `(product_name, destination_city)`, ordered by `transaction_date`
+* **Rolling features**: `rolling_7_avg_demand`, `rolling_7_sum_demand`, `rolling_7_max_demand` — trailing 7-row window (now excluding current row to prevent leakage)
 
-## Notes
+Writes to Feature Store as a time series table (`mle.features.product_city_demand_features`) with primary keys `(product_name, destination_city, transaction_date)` and timeseries column (`transaction_date`).
 
-* **No widgets** — `main.py` uses `argparse` for the `--config-file` parameter instead of Databricks widgets. The DAB job passes the config path as a `spark_python_task` parameter.
-* **Serverless compute** — the job runs on serverless compute by default (no cluster config needed). Libraries are installed via the `libraries` section.
-* **Idempotent** — re-deploying the same target updates the existing job; it does not create a duplicate.
-* **Sync exclusions** — `.github/` and `demand_forecasting/` are excluded from workspace sync via the `sync.exclude` section.
-* **Schedule** — the job includes a daily 08:00 UTC schedule, but it is **paused** by default. Unpause it in the Databricks Jobs UI or set `pause_status: UNPAUSED` in `databricks.yaml`.
+* **Read Features** (`read_features`): Uses `FeatureEngineeringClient.create_training_set()` with a `FeatureLookup` to do a point-in-time join between Gold labels (`demand_quantity`) and Feature Store features. Loads 74,900 rows × 16 features (4 categorical, 12 numerical) into pandas.
+
+* **Split Data** (`split_data`): Chronological split — 64% train (47,936 rows) / 16% validation (11,984 rows) / 20% test (14,980 rows). Time-based, not random, to prevent training on future data.
+
+* **Train Candidate** (`_train_candidate`): Trains an XGBoost regressor (`XGBRegressor`, `n_estimators=200`, `max_depth=5`, `lr=0.1`) inside a sklearn `Pipeline` with a `ColumnTransformer` (imputation + scaling for numerical, imputation + one-hot encoding for categorical). Logs to MLflow with `fe.log_model(flavor=mlflow.sklearn, training_set=...)` for Feature Store lineage. Computes candidate validation metrics using the in-memory model.
+
+* **Technical Validation** (`_technical_validation`): 5 gates — model artifact loadable, signature exists, no NaN/inf predictions, all-numeric schema, non-negative predictions (warning only).
+
+* **Data-Quality Validation** (`_data_quality_validation`): 4 gates — required feature columns present, no unexpected nulls, no train/val date overlap, no val/test date overlap.
+
+* **Register & Challenger** (`_register_and_challenger`): Registers the model in Unity Catalog (`mle.models.demand_forecast_lr`), assigns the "Challenger" alias.
+
+* **Champion/Challenger Comparison** (`_compare_and_promote`):
+  * If no Champion exists: candidate must meet absolute thresholds (R² ≥ 0.3, MAE ≤ 5000, RMSE ≤ 6000)
+  * If Champion exists: evaluates Champion on validation set via `fe.score_batch(model_uri=champion_uri, df=entity_df)`, compares against candidate metrics. Candidate promoted only if it wins ≥2/3 metrics (R² higher, MAE/RMSE lower). Evaluation failure now raises and fails the pipeline — no silent auto-promotion.
+
+* **Final Test Evaluation** (`_final_test_evaluation`): Scores the Champion on the held-out test set via `fe.score_batch(model_uri=champion_uri, df=entity_df)`. Runs only once, after model selection is complete.
+
+* **Production Predictions** (`predict`): Uses `fe.score_batch` to generate predictions, merges with actuals, writes 14,980 predictions to `mle.models.demand_predictions`.
+
+* **Evaluation Plots** (`evaluate`): Logs actual-vs-predicted scatter, residuals plot, and residual histogram to MLflow.
+
+## Orchestration
+
+`main.py` runs both stages in sequence: `run_de_pipeline()` → `run_ml_pipeline()`. It's deployed as a DAB job (`spark_python_task`) with libraries (`databricks-feature-engineering`, `scikit-learn`, `xgboost`). GitHub Actions CI/CD validates on PR and deploys+runs on push to main.
+
+## Challenges & Obstacles Faced
+
+### 1. Feature Store score_batch ASOF Join Bug
+
+* **Problem**: `fe.score_batch()` did a point-in-time ASOF join to look up features, but returned features for the wrong `(product_name, destination_city)` combinations — e.g., querying (Kerosene, Ahmedabad) returned features for (Bitumen, Hyderabad). Predictions from `score_batch` had R²=-0.49 (worse than mean) while direct model predictions had R²=0.48.
+* **Evidence**: Correlation between `score_batch` predictions and direct predictions was -0.013 (essentially random).
+* **Initial fix (later superseded)**: Replaced `fe.score_batch()` with `mlflow.pyfunc.load_model().predict()` in three methods — this worked on classic compute but introduced a new problem on serverless (see challenge #2).
+
+### 2. Serverless score_batch with local_uri Error
+
+* **Problem**: When the pipeline moved to serverless compute (via DAB), `mlflow.pyfunc.load_model().predict()` started failing with `ValueError: score_batch with local_uri is not supported on serverless runtime. Use model_uri instead.`
+* **Root cause**: `fe.log_model` wraps the model in `_FeatureStoreModelWrapper`. When `predict()` is called on the loaded pyfunc model, the wrapper internally calls `score_batch(model_uri=None)`. With `model_uri=None`, the library falls back to a driver-local download path. On serverless, executors cannot access the driver's local temp directory, so this fails.
+* **Key discovery**: `fe.log_model(flavor=mlflow.sklearn)` does NOT produce a sklearn flavor — only a pyfunc (Feature Store wrapper) flavor. `mlflow.sklearn.load_model` raises "Model does not have the 'sklearn' flavor". So the fallback of loading with sklearn directly wasn't available.
+* **Final fix**: Replaced all `mlflow.pyfunc.load_model().predict()` scoring calls with `fe.score_batch(model_uri=<actual_model_uri>, df=entity_df)` in three methods (`_evaluate_model_on_validation`, `_final_test_evaluation`, `predict`). Only entity columns (`product_name`, `destination_city`, `transaction_date`) are passed; `score_batch` fetches the model from the MLflow registry on each executor and looks up features from the Feature Store. `fe.log_model` is preserved for Feature Store lineage.
+
+### 3. Silent Auto-Promotion Bug
+
+* **Problem**: In `_compare_and_promote`, a try/except around the Champion evaluation caught any failure and silently promoted the candidate as Champion with `promotion_decision = "promoted_champion_unloadable"`. This meant a candidate could become Champion without ever being compared against the existing Champion — defeating the entire champion/challenger framework.
+* **Fix**: Removed the try/except entirely. If `_evaluate_model_on_validation` raises an exception, it propagates and the pipeline fails. The candidate is never promoted when the Champion cannot be evaluated.
+
+### 4. Rolling Feature Data Leakage
+
+* **Problem**: The rolling window used `rowsBetween(-(rolling_window - 1), 0)` which included the current row in the rolling average/sum/max of `demand_quantity`. Since `demand_quantity` is the prediction target, this was target leakage — the model could "cheat" by seeing the current target value in its own features.
+* **Fix**: Changed to `rowsBetween(-rolling_window, -1)` — a strictly trailing window that excludes the current row. Lag features (`F.lag()`) were already correct (always look backward).
+
+### 5. XGBoost Not Pre-Installed on Serverless
+
+* **Problem**: `xgboost` is not pre-installed on Databricks Serverless compute. The import `from xgboost import XGBRegressor` fails with `ModuleNotFoundError`.
+* **Fix**: XGBoost needs to be installed via `%pip install xgboost` in a notebook cell or added to the DAB bundle's library list. The DAB bundle libraries need to include `xgboost` alongside `databricks-feature-engineering` and `scikit-learn`. (This is still an open item — the current `xgboost` import at the top of `ml_pipeline.py` fails when the package isn't installed.)
+
+### 6. databricks Namespace Package Shadowing on Serverless
+
+* **Problem**: On serverless, the `databricks` namespace package from the base runtime (`databricks-sdk 0.122.0`) shadows the virtualenv version (`0.145.0`). This caused import conflicts with `databricks.feature_engineering`.
+* **Fix**: Added `databricks.__path__` reordering in `main.py` to put `.ephemeral_nfs` paths first, so the virtualenv version takes precedence.
+
+### 7. %pip install Doesn't Work in .py Files
+
+* **Problem**: When converting from notebooks to `.py` modules, `%pip install` (a notebook magic command) causes `SyntaxError` in plain Python files.
+* **Fix**: Library installation moved to the orchestrator notebook (cell 2) or the DAB bundle's library list. The `.py` files assume libraries are already installed.
+
+### 8. is_weekend Schema Mismatch
+
+* **Problem**: `is_weekend` was stored as boolean in the Feature Store but expected as integer by the model, causing a schema mismatch with `fe.score_batch`.
+* **Fix**: Cast `is_weekend` to `int` in Spark before writing to the Feature Store, and also cast to `int32` in pandas after loading from the training set.
+
+### 9. Champion/Challenger Alias Cleanup
+
+* **Problem**: After promoting a Challenger to Champion, the "Challenger" alias wasn't being removed from the old version, leaving stale aliases.
+* **Fix**: Added `delete_registered_model_alias("Challenger")` to all three promotion paths in `_compare_and_promote`.
+
+### 10. Model Evolution Journey
+
+The model went through three iterations:
+
+1. **LinearRegression**: R²=0.48 val, 0.49 test (but `score_batch` showed R²=-0.49 due to the ASOF join bug)
+2. **GradientBoostingRegressor**: R²=0.59 val, 0.59 test
+3. **XGBoost** (`XGBRegressor`): R²=0.59 val, 0.60 test — current model
+
+### 11. EDA Revealed Fundamental Data Challenge
+
+The Gold EDA notebook revealed that autocorrelation is near zero at all lags (|r|<0.02), there's no meaningful seasonality (monthly variation <3%, day-of-week <2%), and the strong signal is cross-sectional (15 products × 10 cities = 150 combos, demand ranges 453–46,305). This means lag and rolling features add minimal predictive signal — the model primarily relies on categorical identity and cross-sectional baselines. Previous high R² was driven by `ordered_quantity` leakage (r=0.99 with target).
+
+## Current State
+
+The pipeline now uses `fe.score_batch(model_uri=<actual_uri>, df=entity_df)` for all model scoring on serverless, with:
+
+* `fe.log_model` preserved for Feature Store lineage
+* No silent auto-promotion — evaluation failures raise and fail the pipeline
+* Rolling features exclude the current row (no target leakage)
+* Comprehensive logging of all model URIs, MAE values, and promotion decisions
+
+The immediate blocker is the `xgboost` import error — it needs to be added to the DAB bundle libraries or installed before the module is imported.
