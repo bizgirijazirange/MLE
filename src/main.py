@@ -26,9 +26,21 @@ import logging
 import os
 import sys
 import traceback
+from typing import TYPE_CHECKING
 
 import yaml
 from pyspark.sql import SparkSession
+
+if TYPE_CHECKING:
+    # These classes are imported at runtime inside main() via global +
+    # dynamic import (after sys.path is set up).  This block exists solely
+    # so mypy can resolve the names used in run_de_pipeline / run_ml_pipeline.
+    from meadallion_pipeline import (  # noqa: TC004
+        BronzeIngestion,
+        GoldIngestion,
+        SilverIngestion,
+    )
+    from ml_pipeline import FeatureEngineering, ModelTraining  # noqa: TC004
 
 # ---------------------------------------------------------------------------
 # Make sibling modules importable
