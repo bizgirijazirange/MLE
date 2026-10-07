@@ -4,9 +4,10 @@
 # GitHub Actions workflow that runs code-quality checks on every PR and push.
 #
 # Checks performed:
-#   1. Pylint  — style + error + code smell checks (pylint)
-#   2. Mypy    — static type checking
-#   3. Pytest  — unit & integration tests
+#   1. Ruff lint   — style + error checks (ruff check)
+#   2. Ruff format — formatting verification (ruff format --check)
+#   3. Mypy        — static type checking
+#   4. Pytest      — unit & integration tests
 #
 # Triggers:
 #   - Pull request to main
@@ -53,12 +54,16 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install pylint mypy pytest pytest-cov
+          pip install ruff mypy pytest pytest-cov
           pip install -r requirements.txt
 
-      # --- Pylint: lint + style + code smell check ---
-      - name: Pylint check
-        run: pylint src/ --rcfile=.pylintrc --fail-under=8.0
+      # --- Ruff: lint check ---
+      - name: Ruff lint
+        run: ruff check src/ tests/
+
+      # --- Ruff: format check (verify, don't modify) ---
+      - name: Ruff format check
+        run: ruff format --check src/ tests/
 
       # --- Mypy: static type checking ---
       - name: Mypy type check
