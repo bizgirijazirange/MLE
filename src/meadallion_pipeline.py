@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Medallion Pipeline - Bronze -> Silver -> Gold.
 
 This file builds a 3-layer data pipeline (also called a "medallion architecture"):
@@ -111,7 +110,6 @@ class BronzeIngestion(BaseLayer):
         if config_path is None:
             config_path = _get_widget_value(
                 "config_file",
-                
                 "/Workspace/Users/girija.zirange@bizmetric.com/MLE/config/dev.yaml",
             )
         super().__init__(config_path, "bronze_ingestion")
@@ -150,19 +148,21 @@ class BronzeIngestion(BaseLayer):
         self.ensure_schema(self.schema)
         audit_col = self.layer_cfg["audit_columns"]["ingestion_timestamp"]
         write_cfg = self.layer_cfg["write"]
-        (self.df
-            .withColumn(audit_col, F.current_timestamp())
-            .write
-            .format(write_cfg["format"])
+        (
+            self.df.withColumn(audit_col, F.current_timestamp())
+            .write.format(write_cfg["format"])
             .mode(write_cfg["mode"])
             .option("overwriteSchema", str(write_cfg["overwrite_schema"]).lower())
-            .saveAsTable(self.full_table))
+            .saveAsTable(self.full_table)
+        )
         self.logger.info(f"Written {self.row_count:,} rows to {self.full_table}")
 
     def validate(self) -> None:
         """Log Bronze table row and column counts."""
         bronze_df = spark.table(self.full_table)
-        self.logger.info(f"Bronze table: {bronze_df.count():,} rows, {len(bronze_df.columns)} columns")
+        self.logger.info(
+            f"Bronze table: {bronze_df.count():,} rows, {len(bronze_df.columns)} columns"
+        )
 
     def run(self) -> None:
         """Execute the full Bronze ingestion pipeline."""
@@ -199,7 +199,9 @@ class SilverIngestion(BaseLayer):
         self.quarantine_table = self.layer_cfg["target"]["quarantine_table"]
         self.bronze_full = f"{self.catalog}.{self.bronze_schema}.{self.bronze_table}"
         self.silver_full = f"{self.catalog}.{self.silver_schema}.{self.silver_table}"
-        self.quarantine_full = f"{self.catalog}.{self.silver_schema}.{self.quarantine_table}"
+        self.quarantine_full = (
+            f"{self.catalog}.{self.silver_schema}.{self.quarantine_table}"
+        )
         self.logger.info(f"Bronze source:     {self.bronze_full}")
         self.logger.info(f"Silver target:     {self.silver_full}")
         self.logger.info(f"Quarantine target: {self.quarantine_full}")
@@ -219,20 +221,23 @@ class SilverIngestion(BaseLayer):
         function to rank rows within each group and keep rank = 1.
         """
         # Get the column names from config
-        dedup_key = self.layer_cfg["dedup"]["key_column"]     # e.g., "transaction_id"
-        dedup_order = self.layer_cfg["dedup"]["order_column"] # e.g., "bronze_ingestion_timestamp"
+        dedup_key = self.layer_cfg["dedup"]["key_column"]  # e.g., "transaction_id"
+        dedup_order = self.layer_cfg["dedup"][
+            "order_column"
+        ]  # e.g., "bronze_ingestion_timestamp"
         # Window: group by the key column, sort by the order column
         window = Window.partitionBy(dedup_key).orderBy(dedup_order)
         # Rank each row within its group (1 = first/earliest), keep only rank 1
         self.df_deduped = (
-            self.bronze_df
-            .withColumn("_row_rank", F.row_number().over(window))
+            self.bronze_df.withColumn("_row_rank", F.row_number().over(window))
             .filter(F.col("_row_rank") == 1)
             .drop("_row_rank")
         )
         self.dedup_count = self.df_deduped.count()
         self.removed_count = self.bronze_count - self.dedup_count
-        self.logger.info(f"After dedup: {self.dedup_count:,} rows (removed {self.removed_count:,} duplicates)")
+        self.logger.info(
+            f"After dedup: {self.dedup_count:,} rows (removed {self.removed_count:,} duplicates)"
+        )
         return self.df_deduped
 
     def convert_types(self):
@@ -279,7 +284,8 @@ class SilverIngestion(BaseLayer):
         # Rule 3: Format validations (e.g., transaction_id must match a regex pattern)
         for rule in dq_cfg.get("format_validations", []):
             bad_conditions.append(
-                F.col(rule["column"]).isNotNull() & ~F.col(rule["column"]).rlike(rule["pattern"])
+                F.col(rule["column"]).isNotNull()
+                & ~F.col(rule["column"]).rlike(rule["pattern"])
             )
 
         # Rule 4: Cross-field validations (e.g., delay_days should match date difference)
@@ -301,13 +307,17 @@ class SilverIngestion(BaseLayer):
         self.df_typed = self.df_typed.withColumn("_is_bad_record", is_bad)
 
         # Split into good records (pass all rules) and bad records (fail any rule)
-        self.df_good = self.df_typed.filter(~F.col("_is_bad_record")).drop("_is_bad_record")
+        self.df_good = self.df_typed.filter(~F.col("_is_bad_record")).drop(
+            "_is_bad_record"
+        )
         df_bad = self.df_typed.filter(F.col("_is_bad_record"))
         # Build quarantine reasons
         reason_whens = []
         for item in self.layer_cfg["quarantine"]["reason_labels"]:
             if "column" in item:
-                reason_whens.append(F.when(F.col(item["column"]).isNull(), F.lit(item["label"])))
+                reason_whens.append(
+                    F.when(F.col(item["column"]).isNull(), F.lit(item["label"]))
+                )
             elif "validation" in item:
                 for rule in dq_cfg.get("cross_field_validations", []):
                     if rule["name"] == item["validation"]:
@@ -330,7 +340,9 @@ class SilverIngestion(BaseLayer):
                             )
                         )
         bad_reason_expr = F.concat_ws("; ", *reason_whens)
-        self.df_bad = df_bad.withColumn("_quarantine_reason", bad_reason_expr).drop("_is_bad_record")
+        self.df_bad = df_bad.withColumn("_quarantine_reason", bad_reason_expr).drop(
+            "_is_bad_record"
+        )
         self.good_count = self.df_good.count()
         self.bad_count = self.df_bad.count()
         self.logger.info(f"Good records:  {self.good_count:,}")
@@ -341,27 +353,33 @@ class SilverIngestion(BaseLayer):
         """Write good records to the Silver table and bad records to the Quarantine table."""
         self.ensure_schema(self.silver_schema)
         write_cfg = self.layer_cfg["write"]
-        (self.df_good
-            .write
-            .format(write_cfg["format"])
+        (
+            self.df_good.write.format(write_cfg["format"])
             .mode(write_cfg["mode"])
             .option("overwriteSchema", str(write_cfg["overwrite_schema"]).lower())
-            .saveAsTable(self.silver_full))
-        self.logger.info(f"Written {self.good_count:,} good records to {self.silver_full}")
+            .saveAsTable(self.silver_full)
+        )
+        self.logger.info(
+            f"Written {self.good_count:,} good records to {self.silver_full}"
+        )
         if self.bad_count > 0:
-            (self.df_bad
-                .write
-                .format(write_cfg["format"])
+            (
+                self.df_bad.write.format(write_cfg["format"])
                 .mode(write_cfg["mode"])
                 .option("overwriteSchema", str(write_cfg["overwrite_schema"]).lower())
-                .saveAsTable(self.quarantine_full))
-            self.logger.info(f"Written {self.bad_count:,} bad records to {self.quarantine_full}")
+                .saveAsTable(self.quarantine_full)
+            )
+            self.logger.info(
+                f"Written {self.bad_count:,} bad records to {self.quarantine_full}"
+            )
         else:
             self.logger.info("No bad records to quarantine.")
 
     def validate(self) -> None:
         """Log Silver ingestion summary."""
-        self.logger.info(f"Silver: {self.good_count:,} good, {self.bad_count:,} bad, {self.removed_count:,} duplicates removed")
+        self.logger.info(
+            f"Silver: {self.good_count:,} good, {self.bad_count:,} bad, {self.removed_count:,} duplicates removed"
+        )
 
     def run(self) -> None:
         """Execute the full Silver ingestion pipeline."""
@@ -428,8 +446,9 @@ class GoldIngestion(BaseLayer):
         """
         self.logger.info("Aggregating Silver data to Gold grain...")
         self.gold_df = (
-            self.silver_df
-            .groupBy("product_name", "destination_city", "transaction_date")
+            self.silver_df.groupBy(
+                "product_name", "destination_city", "transaction_date"
+            )
             .agg(
                 # Dimension columns: same for all rows in a group, so MIN just picks one value
                 F.min("transaction_month").alias("transaction_month"),
@@ -447,7 +466,9 @@ class GoldIngestion(BaseLayer):
                 # Inventory: average available inventory
                 F.avg("available_inventory").alias("avg_available_inventory"),
                 # Supplier quality: average reliability score
-                F.avg("supplier_reliability_score").alias("avg_supplier_reliability_score"),
+                F.avg("supplier_reliability_score").alias(
+                    "avg_supplier_reliability_score"
+                ),
             )
             # Select columns in a clean, logical order
             .select(
@@ -468,23 +489,28 @@ class GoldIngestion(BaseLayer):
             )
         )
         self.gold_count = self.gold_df.count()
-        self.logger.info(f"Silver: {self.silver_count:,} -> Gold: {self.gold_count:,} ({self.silver_count / self.gold_count:.2f}x compression)")
+        self.logger.info(
+            f"Silver: {self.silver_count:,} -> Gold: {self.gold_count:,} ({self.silver_count / self.gold_count:.2f}x compression)"
+        )
         return self.gold_df
 
     def write_gold(self) -> None:
         """Write the Gold table as a Delta table (idempotent — overwrite mode)."""
         self.ensure_schema(self.gold_schema)
         write_cfg = self.layer_cfg["write"]
-        (self.gold_df.write
-            .format(write_cfg["format"])
+        (
+            self.gold_df.write.format(write_cfg["format"])
             .mode(write_cfg["mode"])
             .option("overwriteSchema", str(write_cfg["overwrite_schema"]).lower())
-            .saveAsTable(self.gold_full))
+            .saveAsTable(self.gold_full)
+        )
         self.logger.info(f"Written {self.gold_count:,} rows to {self.gold_full}")
 
     def validate(self) -> None:
         """Log Gold ingestion summary."""
-        self.logger.info(f"Gold: {self.gold_count:,} rows from {self.silver_count:,} silver rows ({self.silver_count / self.gold_count:.2f}x compression)")
+        self.logger.info(
+            f"Gold: {self.gold_count:,} rows from {self.silver_count:,} silver rows ({self.silver_count / self.gold_count:.2f}x compression)"
+        )
 
     def run(self) -> None:
         """Execute the full Gold ingestion pipeline."""

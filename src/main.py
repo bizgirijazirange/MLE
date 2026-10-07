@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Pipeline Orchestrator — DE + ML Entry Point
 
 Thin orchestration script that runs the data engineering (Medallion:
@@ -84,16 +83,14 @@ def run_de_pipeline(config_file: str, cfg: dict, catalog: str) -> None:
 
         # Log record counts from the Delta tables
         bronze_table = (
-            f"{catalog}.{cfg['schemas']['bronze']}"
-            f".{cfg['bronze']['target']['table']}"
+            f"{catalog}.{cfg['schemas']['bronze']}.{cfg['bronze']['target']['table']}"
         )
         silver_table = (
             f"{catalog}.{cfg['schemas']['silver']}"
             f".{cfg['silver']['target']['silver_table']}"
         )
         gold_table = (
-            f"{catalog}.{cfg['schemas']['gold']}"
-            f".{cfg['gold']['target']['gold_table']}"
+            f"{catalog}.{cfg['schemas']['gold']}.{cfg['gold']['target']['gold_table']}"
         )
 
         bronze_count = spark.table(bronze_table).count()
@@ -158,6 +155,7 @@ def main() -> None:
     config_file = None
     try:
         from databricks.sdk.runtime import dbutils
+
         config_file = dbutils.widgets.get("config_file")
     except Exception:  # noqa: S110, BLE001
         pass

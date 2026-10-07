@@ -1,0 +1,21 @@
+# ===========================================================================
+# Ruff configuration — MLE Supply Chain Pipeline
+# ===========================================================================
+# Discovered automatically by `ruff check` and `ruff format` when run from
+# the project root.  See https://docs.astral.sh/ruff/configuration/
+# ===========================================================================
+
+# Databricks notebook globals that ruff doesn't know about — these are
+# injected by the Databricks runtime and available in all notebook cells.
+builtins = ["spark", "dbutils", "display"]
+
+[lint]
+# EXE001/EXE002: Databricks workspace sets all files to rwxrwxrwx, which
+# conflicts with shebang rules.  File permissions are a workspace artifact,
+# not a code-quality concern.
+ignore = ["EXE001", "EXE002"]
+
+[format]
+# Notebooks (.ipynb) are exploratory/interactive — exclude from format
+# checking.  `ruff check` still lints them for code-quality issues.
+exclude = ["*.ipynb"]
