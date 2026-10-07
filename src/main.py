@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """Pipeline Orchestrator — DE + ML Entry Point
 
 Thin orchestration script that runs the data engineering (Medallion:
@@ -158,7 +159,7 @@ def main() -> None:
     try:
         from databricks.sdk.runtime import dbutils
         config_file = dbutils.widgets.get("config_file")
-    except Exception:
+    except Exception:  # noqa: S110, BLE001
         pass
 
     if not config_file:
@@ -189,7 +190,7 @@ def main() -> None:
         src_dir = os.path.join(project_root, "src")
         if src_dir not in sys.path:
             sys.path.insert(0, src_dir)
-    from meadallion_pipeline import BronzeIngestion, SilverIngestion, GoldIngestion
+    from meadallion_pipeline import BronzeIngestion, GoldIngestion, SilverIngestion
     from ml_pipeline import FeatureEngineering, ModelTraining
 
     # --- Load and log configuration ---

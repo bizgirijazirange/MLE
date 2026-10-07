@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """Medallion Pipeline - Bronze -> Silver -> Gold.
 
 This file builds a 3-layer data pipeline (also called a "medallion architecture"):
@@ -23,13 +24,16 @@ Classes in this file:
 # logging:  For printing messages as the pipeline runs.
 # yaml:     For reading the config file (dev.yaml).
 import logging
+
 import yaml
+from databricks.sdk.runtime import (
+    dbutils,  # For reading Databricks widgets (parameters)
+)
 
 # PySpark: For reading, transforming, and writing large datasets.
 from pyspark.sql import SparkSession
-from pyspark.sql import functions as F          # Spark SQL functions (sum, count, etc.)
-from pyspark.sql.window import Window           # For ranking / deduplication operations
-from databricks.sdk.runtime import dbutils      # For reading Databricks widgets (parameters)
+from pyspark.sql import functions as F  # Spark SQL functions (sum, count, etc.)
+from pyspark.sql.window import Window  # For ranking / deduplication operations
 
 # --- Create the Spark session ---
 # Spark is the engine that processes our data. This line connects to it.
@@ -45,7 +49,7 @@ def _get_widget_value(name: str, default: str = "") -> str:
     """
     try:
         return dbutils.widgets.get(name)
-    except Exception:
+    except Exception:  # noqa: BLE001
         return default
 
 
@@ -103,7 +107,7 @@ class BronzeIngestion(BaseLayer):
         source_path: Path to the source CSV file in a UC Volume.
     """
 
-    def __init__(self, config_path: str = None):
+    def __init__(self, config_path: str | None = None):
         if config_path is None:
             config_path = _get_widget_value(
                 "config_file",
@@ -180,7 +184,7 @@ class SilverIngestion(BaseLayer):
         quarantine_full: Fully qualified quarantine table name.
     """
 
-    def __init__(self, config_path: str = None):
+    def __init__(self, config_path: str | None = None):
         if config_path is None:
             config_path = _get_widget_value(
                 "config_file",
@@ -384,7 +388,7 @@ class GoldIngestion(BaseLayer):
         grain_cols: List of columns defining the Gold grain.
     """
 
-    def __init__(self, config_path: str = None):
+    def __init__(self, config_path: str | None = None):
         if config_path is None:
             config_path = _get_widget_value(
                 "config_file",

@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """ML Pipeline - Feature Engineering -> Train -> Register -> Predict.
 
 This file builds the machine learning part of our pipeline. It takes
@@ -25,26 +26,26 @@ Classes in this file:
 
 # --- Imports ---
 import logging
-import yaml
+
 import mlflow
 import mlflow.sklearn
 import numpy as np
 import pandas as pd
-from pyspark.sql import SparkSession
-from pyspark.sql import functions as F
-from pyspark.sql.functions import col           # For referencing columns by name
-from pyspark.sql.window import Window           # For lag and rolling window calculations
-from databricks.sdk.runtime import dbutils
+import yaml
 from databricks.feature_engineering import FeatureEngineeringClient, FeatureLookup
+from databricks.sdk.runtime import dbutils
 from mlflow.models import infer_signature
 from mlflow.tracking import MlflowClient
-from sklearn.pipeline import Pipeline
+from pyspark.sql import SparkSession
+from pyspark.sql import functions as F
+from pyspark.sql.functions import col  # For referencing columns by name
+from pyspark.sql.window import Window  # For lag and rolling window calculations
 from sklearn.compose import ColumnTransformer
 from sklearn.impute import SimpleImputer
+from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
+from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
-from sklearn.linear_model import LinearRegression
 from xgboost import XGBRegressor
-from sklearn.metrics import r2_score, mean_squared_error, mean_absolute_error
 
 # --- Create the Spark session ---
 # Spark is the engine that processes our data. This line connects to it.
@@ -60,7 +61,7 @@ def _get_widget_value(name: str, default: str = "") -> str:
     """
     try:
         return dbutils.widgets.get(name)
-    except Exception:
+    except Exception:  # noqa: BLE001
         return default
 
 
@@ -110,7 +111,7 @@ class FeatureEngineering(BaseLayer):
         timeseries_column: Name of the timeseries column.
     """
 
-    def __init__(self, config_path: str = None):
+    def __init__(self, config_path: str | None = None):
         if config_path is None:
             config_path = _get_widget_value(
                 "config_file",
@@ -286,7 +287,7 @@ class ModelTraining(BaseLayer):
     Test set is only evaluated once, after the final Champion is selected.
     """
 
-    def __init__(self, config_path: str = None):
+    def __init__(self, config_path: str | None = None):
         if config_path is None:
             config_path = _get_widget_value(
                 "config_file",
@@ -524,10 +525,10 @@ class ModelTraining(BaseLayer):
 
         # Gate 1: Model artifact can be loaded
         try:
-            loaded_model = mlflow.pyfunc.load_model(self.model_uri)
+            mlflow.pyfunc.load_model(self.model_uri)
             results["artifact_loadable"] = True
             self.logger.info("  PASS -- Model artifact loaded successfully")
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             results["artifact_loadable"] = False
             self.logger.error(f"  FAIL -- Cannot load model artifact: {e}")
             all_passed = False
@@ -546,7 +547,7 @@ class ModelTraining(BaseLayer):
             else:
                 self.logger.error("  FAIL -- Model signature missing")
                 all_passed = False
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             results["signature_exists"] = False
             self.logger.error(f"  FAIL -- Cannot verify model signature: {e}")
             all_passed = False
@@ -692,7 +693,7 @@ class ModelTraining(BaseLayer):
                 self.model_name, "Champion"
             )
             return champion_mv.version
-        except Exception:
+        except Exception:  # noqa: BLE001
             return None
 
     def _evaluate_model_on_validation(self, model_uri):
@@ -756,7 +757,7 @@ class ModelTraining(BaseLayer):
             )
 
             if passes:
-                self.logger.info(f"  PASS -- Candidate meets absolute thresholds")
+                self.logger.info("  PASS -- Candidate meets absolute thresholds")
                 self.logger.info(f"  Required: R2 >= {self.min_r2}, MAE <= {self.max_mae}, RMSE <= {self.max_rmse}")
                 self.logger.info(f"  Got:      R2={self.candidate_val_metrics['r2']:.4f}, "
                                  f"MAE={self.candidate_val_metrics['mae']:.2f}, "
@@ -781,7 +782,7 @@ class ModelTraining(BaseLayer):
                 self.promotion_decision = "promoted_new_champion"
                 self.logger.info(f"Promotion decision: PROMOTED (v{self.candidate_version} -> Champion, no prior Champion)")
             else:
-                self.logger.error(f"  FAIL -- Candidate does not meet absolute thresholds")
+                self.logger.error("  FAIL -- Candidate does not meet absolute thresholds")
                 self.logger.error(f"  Required: R2 >= {self.min_r2}, MAE <= {self.max_mae}, RMSE <= {self.max_rmse}")
                 self.logger.error(f"  Got:      R2={self.candidate_val_metrics['r2']:.4f}, "
                                   f"MAE={self.candidate_val_metrics['mae']:.2f}, "
@@ -793,7 +794,7 @@ class ModelTraining(BaseLayer):
 
                 self.champion_version = None
                 self.promotion_decision = "rejected"
-                self.logger.info(f"Promotion decision: REJECTED (candidate failed absolute thresholds)")
+                self.logger.info("Promotion decision: REJECTED (candidate failed absolute thresholds)")
             return
 
         self.logger.info(f"Existing Champion: version {champion_version}")
