@@ -40,7 +40,6 @@ if TYPE_CHECKING:
         GoldIngestion,
         SilverIngestion,
     )
-
     from ml_pipeline import FeatureEngineering, ModelTraining  # noqa: TC004
 
 # ---------------------------------------------------------------------------
@@ -202,7 +201,6 @@ def main() -> None:
         if src_dir not in sys.path:
             sys.path.insert(0, src_dir)
     from medallion_pipeline import BronzeIngestion, GoldIngestion, SilverIngestion
-
     from ml_pipeline import FeatureEngineering, ModelTraining
 
     # --- Load and log configuration ---
