@@ -5,7 +5,7 @@ Bronze → Silver → Gold) and machine learning (Feature Engineering →
 Train → Register → Predict) pipelines in sequence.
 
 All class definitions live in importable ``.py`` modules
-(``meadallion_pipeline.py``, ``ml_pipeline.py``) in the same directory.
+(``medallion_pipeline.py``, ``ml_pipeline.py``) in the same directory.
 This script imports them, calls their ``.run()`` methods directly, and
 manages parameters, configuration, logging, and error handling.
 
@@ -35,11 +35,12 @@ if TYPE_CHECKING:
     # These classes are imported at runtime inside main() via global +
     # dynamic import (after sys.path is set up).  This block exists solely
     # so mypy can resolve the names used in run_de_pipeline / run_ml_pipeline.
-    from meadallion_pipeline import (  # noqa: TC004
+    from medallion_pipeline import (  # noqa: TC004
         BronzeIngestion,
         GoldIngestion,
         SilverIngestion,
     )
+
     from ml_pipeline import FeatureEngineering, ModelTraining  # noqa: TC004
 
 # ---------------------------------------------------------------------------
@@ -200,7 +201,8 @@ def main() -> None:
         src_dir = os.path.join(project_root, "src")
         if src_dir not in sys.path:
             sys.path.insert(0, src_dir)
-    from meadallion_pipeline import BronzeIngestion, GoldIngestion, SilverIngestion
+    from medallion_pipeline import BronzeIngestion, GoldIngestion, SilverIngestion
+
     from ml_pipeline import FeatureEngineering, ModelTraining
 
     # --- Load and log configuration ---
