@@ -16,8 +16,8 @@ variables:
   config_file:
     description: "Path to the environment config YAML file"
 
-# Resource definitions are in resources/mle_pipeline_job.yml
-# DAB automatically includes all *.yml files in the resources/ directory.
+include:
+  - resources/*.yml
 
 targets:
   dev:
