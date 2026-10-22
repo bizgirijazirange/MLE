@@ -1,0 +1,1876 @@
+{
+  "datasets": [
+    {
+      "name": "joined_demand",
+      "displayName": "Joined Demand (Actual vs Predicted)",
+      "queryLines": [
+        "SELECT\n",
+        "  g.transaction_date,\n",
+        "  g.transaction_month,\n",
+        "  g.product_name,\n",
+        "  g.product_category,\n",
+        "  g.destination_city,\n",
+        "  g.demand_quantity AS actual_demand,\n",
+        "  p.predicted_demand,\n",
+        "  p.model_name,\n",
+        "  p.model_version,\n",
+        "  p.mlflow_run_id,\n",
+        "  p.alias,\n",
+        "  (p.predicted_demand - g.demand_quantity) AS prediction_error,\n",
+        "  ABS(p.predicted_demand - g.demand_quantity) AS abs_error,\n",
+        "  g.avg_unit_price_usd,\n",
+        "  g.avg_available_inventory\n",
+        "FROM\n",
+        "  mle.gold.product_city_demand g\n",
+        "    INNER JOIN mle.models.demand_predictions p\n",
+        "      ON g.product_name = p.product_name\n",
+        "      AND g.destination_city = p.destination_city\n",
+        "      AND g.transaction_date = CAST(p.transaction_date AS DATE)"
+      ]
+    },
+    {
+      "name": "demand_by_category",
+      "displayName": "Demand by Category",
+      "queryLines": [
+        "SELECT\n",
+        "  g.product_category,\n",
+        "  SUM(g.demand_quantity) AS total_actual_demand,\n",
+        "  SUM(p.predicted_demand) AS total_predicted_demand,\n",
+        "  AVG(ABS(p.predicted_demand - g.demand_quantity)) AS avg_abs_error\n",
+        "FROM\n",
+        "  mle.gold.product_city_demand g\n",
+        "    INNER JOIN mle.models.demand_predictions p\n",
+        "      ON g.product_name = p.product_name\n",
+        "      AND g.destination_city = p.destination_city\n",
+        "      AND g.transaction_date = CAST(p.transaction_date AS DATE)\n",
+        "GROUP BY\n",
+        "  g.product_category\n",
+        "ORDER BY\n",
+        "  total_actual_demand DESC"
+      ]
+    },
+    {
+      "name": "model_evaluation",
+      "displayName": "Model Evaluation Metrics",
+      "queryLines": [
+        "WITH joined AS (\n",
+        "  SELECT\n",
+        "    g.demand_quantity AS actual_demand,\n",
+        "    p.predicted_demand,\n",
+        "    p.model_name,\n",
+        "    p.model_version,\n",
+        "    p.alias\n",
+        "  FROM\n",
+        "    mle.gold.product_city_demand g\n",
+        "      INNER JOIN mle.models.demand_predictions p\n",
+        "        ON g.product_name = p.product_name\n",
+        "        AND g.destination_city = p.destination_city\n",
+        "        AND g.transaction_date = CAST(p.transaction_date AS DATE)\n",
+        "),\n",
+        "model_means AS (\n",
+        "  SELECT\n",
+        "    model_name,\n",
+        "    model_version,\n",
+        "    alias,\n",
+        "    AVG(actual_demand) AS avg_actual_demand\n",
+        "  FROM\n",
+        "    joined\n",
+        "  GROUP BY\n",
+        "    model_name,\n",
+        "    model_version,\n",
+        "    alias\n",
+        ")\n",
+        "SELECT\n",
+        "  j.model_name,\n",
+        "  j.model_version,\n",
+        "  j.alias,\n",
+        "  COUNT(*) AS prediction_count,\n",
+        "  SUM(j.actual_demand) AS total_actual_demand,\n",
+        "  SUM(j.predicted_demand) AS total_predicted_demand,\n",
+        "  AVG(ABS(j.predicted_demand - j.actual_demand)) AS mae,\n",
+        "  SQRT(AVG(POWER(j.predicted_demand - j.actual_demand, 2))) AS rmse,\n",
+        "  1\n",
+        "    - SUM(POWER(j.predicted_demand - j.actual_demand, 2))\n",
+        "      / SUM(POWER(j.actual_demand - m.avg_actual_demand, 2)) AS r2,\n",
+        "  AVG(ABS((j.predicted_demand - j.actual_demand) / NULLIF(j.actual_demand, 0))) * 100 AS mape\n",
+        "FROM\n",
+        "  joined j\n",
+        "    INNER JOIN model_means m\n",
+        "      ON j.model_name = m.model_name\n",
+        "      AND j.model_version = m.model_version\n",
+        "      AND j.alias = m.alias\n",
+        "GROUP BY\n",
+        "  j.model_name,\n",
+        "  j.model_version,\n",
+        "  j.alias,\n",
+        "  m.avg_actual_demand"
+      ]
+    },
+    {
+      "name": "demand_over_time",
+      "displayName": "Daily Demand Over Time",
+      "queryLines": [
+        "SELECT\n",
+        "  g.transaction_date,\n",
+        "  SUM(g.demand_quantity) AS total_actual_demand,\n",
+        "  SUM(p.predicted_demand) AS total_predicted_demand\n",
+        "FROM\n",
+        "  mle.gold.product_city_demand g\n",
+        "    INNER JOIN mle.models.demand_predictions p\n",
+        "      ON g.product_name = p.product_name\n",
+        "      AND g.destination_city = p.destination_city\n",
+        "      AND g.transaction_date = CAST(p.transaction_date AS DATE)\n",
+        "GROUP BY\n",
+        "  g.transaction_date\n",
+        "ORDER BY\n",
+        "  g.transaction_date"
+      ]
+    },
+    {
+      "name": "demand_by_product",
+      "displayName": "Demand by Product",
+      "queryLines": [
+        "SELECT\n",
+        "  g.product_name,\n",
+        "  g.product_category,\n",
+        "  SUM(g.demand_quantity) AS total_actual_demand,\n",
+        "  SUM(p.predicted_demand) AS total_predicted_demand,\n",
+        "  AVG(ABS(p.predicted_demand - g.demand_quantity)) AS avg_abs_error\n",
+        "FROM\n",
+        "  mle.gold.product_city_demand g\n",
+        "    INNER JOIN mle.models.demand_predictions p\n",
+        "      ON g.product_name = p.product_name\n",
+        "      AND g.destination_city = p.destination_city\n",
+        "      AND g.transaction_date = CAST(p.transaction_date AS DATE)\n",
+        "GROUP BY\n",
+        "  g.product_name,\n",
+        "  g.product_category\n",
+        "ORDER BY\n",
+        "  total_actual_demand DESC"
+      ]
+    },
+    {
+      "name": "demand_by_city",
+      "displayName": "Demand by City",
+      "queryLines": [
+        "SELECT\n",
+        "  g.destination_city,\n",
+        "  SUM(g.demand_quantity) AS total_actual_demand,\n",
+        "  SUM(p.predicted_demand) AS total_predicted_demand,\n",
+        "  AVG(ABS(p.predicted_demand - g.demand_quantity)) AS avg_abs_error\n",
+        "FROM\n",
+        "  mle.gold.product_city_demand g\n",
+        "    INNER JOIN mle.models.demand_predictions p\n",
+        "      ON g.product_name = p.product_name\n",
+        "      AND g.destination_city = p.destination_city\n",
+        "      AND g.transaction_date = CAST(p.transaction_date AS DATE)\n",
+        "GROUP BY\n",
+        "  g.destination_city\n",
+        "ORDER BY\n",
+        "  total_actual_demand DESC"
+      ]
+    },
+    {
+      "name": "monthly_drift_metrics",
+      "displayName": "Monthly Drift Metrics",
+      "queryLines": [
+        "SELECT\n",
+        "  DATE_TRUNC('MONTH', g.transaction_date) AS drift_month,\n",
+        "  COUNT(*) AS prediction_count,\n",
+        "  AVG(ABS(p.predicted_demand - g.demand_quantity)) AS mae,\n",
+        "  SQRT(AVG(POWER(p.predicted_demand - g.demand_quantity, 2))) AS rmse,\n",
+        "  AVG(p.predicted_demand - g.demand_quantity) AS bias,\n",
+        "  AVG(ABS((p.predicted_demand - g.demand_quantity) / NULLIF(g.demand_quantity, 0))) * 100 AS mape,\n",
+        "  SUM(g.demand_quantity) AS total_actual,\n",
+        "  SUM(p.predicted_demand) AS total_predicted\n",
+        "FROM\n",
+        "  mle.gold.product_city_demand g\n",
+        "    INNER JOIN mle.models.demand_predictions p\n",
+        "      ON g.product_name = p.product_name\n",
+        "      AND g.destination_city = p.destination_city\n",
+        "      AND g.transaction_date = CAST(p.transaction_date AS DATE)\n",
+        "GROUP BY\n",
+        "  DATE_TRUNC('MONTH', g.transaction_date)\n",
+        "ORDER BY\n",
+        "  drift_month"
+      ]
+    },
+    {
+      "name": "train_test_features",
+      "displayName": "Train/Test Feature Distribution",
+      "queryLines": [
+        "WITH bounds AS (\n",
+        "  SELECT\n",
+        "    MIN(transaction_date) AS min_date,\n",
+        "    DATEDIFF(MAX(transaction_date), MIN(transaction_date)) + 1 AS total_days\n",
+        "  FROM\n",
+        "    mle.gold.product_city_demand\n",
+        "),\n",
+        "split_pts AS (\n",
+        "  SELECT\n",
+        "    min_date,\n",
+        "    DATE_ADD(min_date, CAST(total_days * 0.64 AS INT)) AS train_end,\n",
+        "    DATE_ADD(min_date, CAST(total_days * 0.80 AS INT)) AS test_start\n",
+        "  FROM\n",
+        "    bounds\n",
+        "),\n",
+        "labeled AS (\n",
+        "  SELECT\n",
+        "    CASE\n",
+        "      WHEN\n",
+        "        g.transaction_date\n",
+        "          <= (\n",
+        "            SELECT\n",
+        "              train_end\n",
+        "            FROM\n",
+        "              split_pts\n",
+        "          )\n",
+        "      THEN\n",
+        "        'Training'\n",
+        "      WHEN\n",
+        "        g.transaction_date\n",
+        "          >= (\n",
+        "            SELECT\n",
+        "              test_start\n",
+        "            FROM\n",
+        "              split_pts\n",
+        "          )\n",
+        "      THEN\n",
+        "        'Testing'\n",
+        "      ELSE 'Validation'\n",
+        "    END AS dataset_split,\n",
+        "    g.demand_quantity,\n",
+        "    g.avg_unit_price_usd,\n",
+        "    g.avg_available_inventory,\n",
+        "    g.avg_product_cost_usd,\n",
+        "    g.avg_supplier_reliability_score\n",
+        "  FROM\n",
+        "    mle.gold.product_city_demand g\n",
+        "),\n",
+        "stacked AS (\n",
+        "  SELECT\n",
+        "    'demand_quantity' AS feature_name,\n",
+        "    dataset_split,\n",
+        "    demand_quantity AS value\n",
+        "  FROM\n",
+        "    labeled\n",
+        "  UNION ALL\n",
+        "  SELECT\n",
+        "    'avg_unit_price_usd',\n",
+        "    dataset_split,\n",
+        "    avg_unit_price_usd\n",
+        "  FROM\n",
+        "    labeled\n",
+        "  UNION ALL\n",
+        "  SELECT\n",
+        "    'avg_available_inventory',\n",
+        "    dataset_split,\n",
+        "    avg_available_inventory\n",
+        "  FROM\n",
+        "    labeled\n",
+        "  UNION ALL\n",
+        "  SELECT\n",
+        "    'avg_product_cost_usd',\n",
+        "    dataset_split,\n",
+        "    avg_product_cost_usd\n",
+        "  FROM\n",
+        "    labeled\n",
+        "  UNION ALL\n",
+        "  SELECT\n",
+        "    'avg_supplier_reliability_score',\n",
+        "    dataset_split,\n",
+        "    avg_supplier_reliability_score\n",
+        "  FROM\n",
+        "    labeled\n",
+        ")\n",
+        "SELECT\n",
+        "  feature_name,\n",
+        "  dataset_split,\n",
+        "  COUNT(*) AS sample_count,\n",
+        "  AVG(value) AS mean_value,\n",
+        "  STDDEV(value) AS std_value,\n",
+        "  MIN(value) AS min_value,\n",
+        "  MAX(value) AS max_value,\n",
+        "  PERCENTILE(value, 0.25) AS p25,\n",
+        "  PERCENTILE(value, 0.5) AS median,\n",
+        "  PERCENTILE(value, 0.75) AS p75\n",
+        "FROM\n",
+        "  stacked\n",
+        "WHERE\n",
+        "  dataset_split IN ('Training', 'Testing')\n",
+        "GROUP BY\n",
+        "  feature_name,\n",
+        "  dataset_split\n",
+        "ORDER BY\n",
+        "  feature_name,\n",
+        "  dataset_split"
+      ],
+      "catalog": "mle",
+      "schema": "gold"
+    },
+    {
+      "name": "train_test_monthly",
+      "displayName": "Train/Test Monthly Demand Stats",
+      "queryLines": [
+        "WITH bounds AS (\n",
+        "  SELECT\n",
+        "    MIN(transaction_date) AS min_date,\n",
+        "    DATEDIFF(MAX(transaction_date), MIN(transaction_date)) + 1 AS total_days\n",
+        "  FROM\n",
+        "    mle.gold.product_city_demand\n",
+        "),\n",
+        "split_pts AS (\n",
+        "  SELECT\n",
+        "    min_date,\n",
+        "    DATE_ADD(min_date, CAST(total_days * 0.64 AS INT)) AS train_end,\n",
+        "    DATE_ADD(min_date, CAST(total_days * 0.80 AS INT)) AS test_start\n",
+        "  FROM\n",
+        "    bounds\n",
+        ")\n",
+        "SELECT\n",
+        "  DATE_TRUNC('MONTH', g.transaction_date) AS month,\n",
+        "  CASE\n",
+        "    WHEN\n",
+        "      g.transaction_date\n",
+        "        <= (\n",
+        "          SELECT\n",
+        "            train_end\n",
+        "          FROM\n",
+        "            split_pts\n",
+        "        )\n",
+        "    THEN\n",
+        "      'Training'\n",
+        "    WHEN\n",
+        "      g.transaction_date\n",
+        "        >= (\n",
+        "          SELECT\n",
+        "            test_start\n",
+        "          FROM\n",
+        "            split_pts\n",
+        "        )\n",
+        "    THEN\n",
+        "      'Testing'\n",
+        "    ELSE 'Validation'\n",
+        "  END AS dataset_split,\n",
+        "  COUNT(*) AS record_count,\n",
+        "  AVG(g.demand_quantity) AS avg_demand,\n",
+        "  STDDEV(g.demand_quantity) AS std_demand,\n",
+        "  MIN(g.demand_quantity) AS min_demand,\n",
+        "  MAX(g.demand_quantity) AS max_demand,\n",
+        "  PERCENTILE(g.demand_quantity, 0.5) AS median_demand\n",
+        "FROM\n",
+        "  mle.gold.product_city_demand g\n",
+        "GROUP BY\n",
+        "  1,\n",
+        "  2\n",
+        "ORDER BY\n",
+        "  1"
+      ],
+      "catalog": "mle",
+      "schema": "gold"
+    },
+    {
+      "name": "train_test_product",
+      "displayName": "Train/Test Product Comparison",
+      "queryLines": [
+        "WITH bounds AS (\n",
+        "  SELECT\n",
+        "    MIN(transaction_date) AS min_date,\n",
+        "    DATEDIFF(MAX(transaction_date), MIN(transaction_date)) + 1 AS total_days\n",
+        "  FROM\n",
+        "    mle.gold.product_city_demand\n",
+        "),\n",
+        "split_pts AS (\n",
+        "  SELECT\n",
+        "    min_date,\n",
+        "    DATE_ADD(min_date, CAST(total_days * 0.64 AS INT)) AS train_end,\n",
+        "    DATE_ADD(min_date, CAST(total_days * 0.80 AS INT)) AS test_start\n",
+        "  FROM\n",
+        "    bounds\n",
+        ")\n",
+        "SELECT\n",
+        "  g.product_name,\n",
+        "  g.product_category,\n",
+        "  CASE\n",
+        "    WHEN\n",
+        "      g.transaction_date\n",
+        "        <= (\n",
+        "          SELECT\n",
+        "            train_end\n",
+        "          FROM\n",
+        "            split_pts\n",
+        "        )\n",
+        "    THEN\n",
+        "      'Training'\n",
+        "    WHEN\n",
+        "      g.transaction_date\n",
+        "        >= (\n",
+        "          SELECT\n",
+        "            test_start\n",
+        "          FROM\n",
+        "            split_pts\n",
+        "        )\n",
+        "    THEN\n",
+        "      'Testing'\n",
+        "    ELSE 'Validation'\n",
+        "  END AS dataset_split,\n",
+        "  COUNT(*) AS record_count,\n",
+        "  AVG(g.demand_quantity) AS avg_demand,\n",
+        "  STDDEV(g.demand_quantity) AS std_demand,\n",
+        "  MIN(g.demand_quantity) AS min_demand,\n",
+        "  MAX(g.demand_quantity) AS max_demand\n",
+        "FROM\n",
+        "  mle.gold.product_city_demand g\n",
+        "GROUP BY\n",
+        "  1,\n",
+        "  2,\n",
+        "  3\n",
+        "ORDER BY\n",
+        "  1,\n",
+        "  3"
+      ],
+      "catalog": "mle",
+      "schema": "gold"
+    },
+    {
+      "name": "drift_results",
+      "displayName": "Drift Results (Latest)",
+      "queryLines": [
+        "SELECT\n",
+        "  feature,\n",
+        "  ks_statistic,\n",
+        "  p_value,\n",
+        "  CASE\n",
+        "    WHEN p_value < 0.05 THEN 'Drift Detected'\n",
+        "    ELSE 'No Significant Drift'\n",
+        "  END AS drift_status,\n",
+        "  eval_date,\n",
+        "  comparison_type,\n",
+        "  train_rows,\n",
+        "  test_rows,\n",
+        "  reference_month,\n",
+        "  reference_year,\n",
+        "  current_month,\n",
+        "  current_year\n",
+        "FROM\n",
+        "  mle.monitoring.model_drift_ks_results\n",
+        "WHERE\n",
+        "  comparison_type = 'train_vs_test'\n",
+        "  AND eval_date\n",
+        "    = (\n",
+        "      SELECT\n",
+        "        MAX(eval_date)\n",
+        "      FROM\n",
+        "        mle.monitoring.model_drift_ks_results\n",
+        "      WHERE\n",
+        "        comparison_type = 'train_vs_test'\n",
+        "    )\n",
+        "ORDER BY\n",
+        "  feature"
+      ],
+      "catalog": "mle",
+      "schema": "monitoring"
+    },
+    {
+      "name": "drift_summary",
+      "displayName": "Drift Summary",
+      "queryLines": [
+        "SELECT\n",
+        "  COUNT(*) AS total_features,\n",
+        "  SUM(\n",
+        "    CASE\n",
+        "      WHEN p_value < 0.05 THEN 1\n",
+        "      ELSE 0\n",
+        "    END\n",
+        "  ) AS drifted_features,\n",
+        "  CASE\n",
+        "    WHEN\n",
+        "      SUM(\n",
+        "        CASE\n",
+        "          WHEN p_value < 0.05 THEN 1\n",
+        "          ELSE 0\n",
+        "        END\n",
+        "      ) > 0\n",
+        "    THEN\n",
+        "      'Drift Detected'\n",
+        "    ELSE 'No Significant Drift Detected'\n",
+        "  END AS overall_status,\n",
+        "  MAX(eval_date) AS latest_eval_date,\n",
+        "  MAX(comparison_type) AS comparison_type,\n",
+        "  MAX(train_rows) AS train_rows,\n",
+        "  MAX(test_rows) AS test_rows\n",
+        "FROM\n",
+        "  mle.monitoring.model_drift_ks_results\n",
+        "WHERE\n",
+        "  comparison_type = 'train_vs_test'\n",
+        "  AND eval_date\n",
+        "    = (\n",
+        "      SELECT\n",
+        "        MAX(eval_date)\n",
+        "      FROM\n",
+        "        mle.monitoring.model_drift_ks_results\n",
+        "      WHERE\n",
+        "        comparison_type = 'train_vs_test'\n",
+        "    )"
+      ],
+      "catalog": "mle",
+      "schema": "monitoring"
+    }
+  ],
+  "pages": [
+    {
+      "name": "d1eaee6a",
+      "displayName": "Demand Analytics & ML Insights",
+      "layout": [
+        {
+          "widget": {
+            "name": "filter_date",
+            "queries": [
+              {
+                "name": "dashboards/01f1ccac30e51d32bd8f47571e922c6b/datasets/01f1ccac48e91e99950cc1aad2b8756f_transaction_date",
+                "query": {
+                  "datasetName": "joined_demand",
+                  "fields": [
+                    {
+                      "name": "transaction_date",
+                      "expression": "`transaction_date`"
+                    },
+                    {
+                      "name": "transaction_date_associativity",
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "frame": {
+                "showTitle": true,
+                "title": "Date Range"
+              },
+              "widgetType": "filter-date-range-picker",
+              "encodings": {
+                "fields": [
+                  {
+                    "fieldName": "transaction_date",
+                    "queryName": "dashboards/01f1ccac30e51d32bd8f47571e922c6b/datasets/01f1ccac48e91e99950cc1aad2b8756f_transaction_date"
+                  }
+                ]
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 4,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "chart_monthly_trend",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "joined_demand",
+                  "fields": [
+                    {
+                      "name": "$time_grain",
+                      "variable": "time_grain"
+                    },
+                    {
+                      "name": "sum(actual_demand)",
+                      "expression": "SUM(`actual_demand`)"
+                    },
+                    {
+                      "name": "sum(predicted_demand)",
+                      "expression": "SUM(`predicted_demand`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": "Demand Trend"
+              },
+              "version": 3,
+              "widgetType": "line",
+              "encodings": {
+                "x": {
+                  "fieldName": "$time_grain",
+                  "scale": {
+                    "type": "temporal"
+                  }
+                },
+                "y": {
+                  "fields": [
+                    {
+                      "fieldName": "sum(actual_demand)",
+                      "displayName": "Actual Demand"
+                    },
+                    {
+                      "fieldName": "sum(predicted_demand)",
+                      "displayName": "Predicted Demand"
+                    }
+                  ],
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 30,
+            "width": 12,
+            "height": 5
+          }
+        },
+        {
+          "widget": {
+            "name": "table_model_eval",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "model_evaluation",
+                  "fields": [
+                    {
+                      "name": "model_name",
+                      "expression": "`model_name`"
+                    },
+                    {
+                      "name": "model_version",
+                      "expression": "`model_version`"
+                    },
+                    {
+                      "name": "alias",
+                      "expression": "`alias`"
+                    },
+                    {
+                      "name": "prediction_count",
+                      "expression": "`prediction_count`"
+                    },
+                    {
+                      "name": "total_actual_demand",
+                      "expression": "`total_actual_demand`"
+                    },
+                    {
+                      "name": "total_predicted_demand",
+                      "expression": "`total_predicted_demand`"
+                    },
+                    {
+                      "name": "mae",
+                      "expression": "`mae`"
+                    },
+                    {
+                      "name": "rmse",
+                      "expression": "`rmse`"
+                    },
+                    {
+                      "name": "r2",
+                      "expression": "`r2`"
+                    },
+                    {
+                      "name": "mape",
+                      "expression": "`mape`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": "Model Evaluation Summary"
+              },
+              "version": 2,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "model_name"
+                  },
+                  {
+                    "fieldName": "model_version"
+                  },
+                  {
+                    "fieldName": "alias"
+                  },
+                  {
+                    "fieldName": "prediction_count"
+                  },
+                  {
+                    "fieldName": "total_actual_demand"
+                  },
+                  {
+                    "fieldName": "total_predicted_demand"
+                  },
+                  {
+                    "fieldName": "mae"
+                  },
+                  {
+                    "fieldName": "rmse"
+                  },
+                  {
+                    "fieldName": "r2"
+                  },
+                  {
+                    "fieldName": "mape"
+                  }
+                ]
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 50,
+            "width": 12,
+            "height": 4
+          }
+        },
+        {
+          "widget": {
+            "name": "filter_product",
+            "queries": [
+              {
+                "name": "dashboards/01f1ccac30e51d32bd8f47571e922c6b/datasets/01f1ccac48e91e99950cc1aad2b8756f_product_name",
+                "query": {
+                  "datasetName": "joined_demand",
+                  "fields": [
+                    {
+                      "name": "product_name",
+                      "expression": "`product_name`"
+                    },
+                    {
+                      "name": "product_name_associativity",
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "frame": {
+                "showTitle": true,
+                "title": "Product"
+              },
+              "widgetType": "filter-multi-select",
+              "encodings": {
+                "fields": [
+                  {
+                    "fieldName": "product_name",
+                    "queryName": "dashboards/01f1ccac30e51d32bd8f47571e922c6b/datasets/01f1ccac48e91e99950cc1aad2b8756f_product_name"
+                  }
+                ]
+              }
+            }
+          },
+          "position": {
+            "x": 4,
+            "y": 0,
+            "width": 4,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "chart_top_products",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "joined_demand",
+                  "fields": [
+                    {
+                      "name": "product_name",
+                      "expression": "`product_name`"
+                    },
+                    {
+                      "name": "sum(actual_demand)",
+                      "expression": "SUM(`actual_demand`)"
+                    }
+                  ],
+                  "disaggregated": false,
+                  "orders": [
+                    {
+                      "direction": "DESC",
+                      "expression": "SUM(`actual_demand`)"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": "Top 10 Products by Demand"
+              },
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "product_name",
+                  "scale": {
+                    "type": "categorical",
+                    "categorySize": {
+                      "type": "number-of-categories",
+                      "number": 10
+                    },
+                    "sort": {
+                      "by": "measure-reversed",
+                      "measure": {
+                        "fieldName": "sum(actual_demand)"
+                      }
+                    }
+                  }
+                },
+                "y": {
+                  "fieldName": "sum(actual_demand)",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 35,
+            "width": 6,
+            "height": 5
+          }
+        },
+        {
+          "widget": {
+            "name": "filter_city",
+            "queries": [
+              {
+                "name": "dashboards/01f1ccac30e51d32bd8f47571e922c6b/datasets/01f1ccac48e91e99950cc1aad2b8756f_destination_city",
+                "query": {
+                  "datasetName": "joined_demand",
+                  "fields": [
+                    {
+                      "name": "destination_city",
+                      "expression": "`destination_city`"
+                    },
+                    {
+                      "name": "destination_city_associativity",
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "frame": {
+                "showTitle": true,
+                "title": "Destination City"
+              },
+              "widgetType": "filter-multi-select",
+              "encodings": {
+                "fields": [
+                  {
+                    "fieldName": "destination_city",
+                    "queryName": "dashboards/01f1ccac30e51d32bd8f47571e922c6b/datasets/01f1ccac48e91e99950cc1aad2b8756f_destination_city"
+                  }
+                ]
+              }
+            }
+          },
+          "position": {
+            "x": 8,
+            "y": 0,
+            "width": 4,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "chart_demand_city",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "joined_demand",
+                  "fields": [
+                    {
+                      "name": "destination_city",
+                      "expression": "`destination_city`"
+                    },
+                    {
+                      "name": "sum(actual_demand)",
+                      "expression": "SUM(`actual_demand`)"
+                    }
+                  ],
+                  "disaggregated": false,
+                  "orders": [
+                    {
+                      "direction": "DESC",
+                      "expression": "SUM(`actual_demand`)"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": "Demand by City"
+              },
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "destination_city",
+                  "scale": {
+                    "type": "categorical",
+                    "sort": {
+                      "by": "measure-reversed",
+                      "measure": {
+                        "fieldName": "sum(actual_demand)"
+                      }
+                    }
+                  }
+                },
+                "y": {
+                  "fieldName": "sum(actual_demand)",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 35,
+            "width": 6,
+            "height": 5
+          }
+        },
+        {
+          "widget": {
+            "name": "kpi_total_demand",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "joined_demand",
+                  "fields": [
+                    {
+                      "name": "sum(actual_demand)",
+                      "expression": "SUM(`actual_demand`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": "Total Demand"
+              },
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "sum(actual_demand)"
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 3,
+            "width": 2,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "chart_category",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "joined_demand",
+                  "fields": [
+                    {
+                      "name": "product_category",
+                      "expression": "`product_category`"
+                    },
+                    {
+                      "name": "sum(actual_demand)",
+                      "expression": "SUM(`actual_demand`)"
+                    }
+                  ],
+                  "disaggregated": false,
+                  "orders": [
+                    {
+                      "direction": "DESC",
+                      "expression": "SUM(`actual_demand`)"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": "Product Category Distribution"
+              },
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "product_category",
+                  "scale": {
+                    "type": "categorical",
+                    "sort": {
+                      "by": "measure-reversed",
+                      "measure": {
+                        "fieldName": "sum(actual_demand)"
+                      }
+                    }
+                  }
+                },
+                "y": {
+                  "fieldName": "sum(actual_demand)",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 40,
+            "width": 6,
+            "height": 5
+          }
+        },
+        {
+          "widget": {
+            "name": "kpi_predicted_demand",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "joined_demand",
+                  "fields": [
+                    {
+                      "name": "sum(predicted_demand)",
+                      "expression": "SUM(`predicted_demand`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": "Predicted Demand"
+              },
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "sum(predicted_demand)"
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 2,
+            "y": 3,
+            "width": 2,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "chart_scatter",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "joined_demand",
+                  "fields": [
+                    {
+                      "name": "actual_demand",
+                      "expression": "`actual_demand`"
+                    },
+                    {
+                      "name": "predicted_demand",
+                      "expression": "`predicted_demand`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": "Actual vs Predicted Demand"
+              },
+              "version": 3,
+              "mark": {
+                "opacity": 0.4
+              },
+              "widgetType": "scatter",
+              "encodings": {
+                "x": {
+                  "fieldName": "actual_demand",
+                  "displayName": "Actual Demand",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "y": {
+                  "fieldName": "predicted_demand",
+                  "displayName": "Predicted Demand",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 40,
+            "width": 6,
+            "height": 5
+          }
+        },
+        {
+          "widget": {
+            "name": "kpi_mae",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "joined_demand",
+                  "fields": [
+                    {
+                      "name": "avg(abs_error)",
+                      "expression": "AVG(`abs_error`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": "MAE"
+              },
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "avg(abs_error)"
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 4,
+            "y": 3,
+            "width": 2,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "kpi_rmse",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "model_evaluation",
+                  "fields": [
+                    {
+                      "name": "avg(rmse)",
+                      "expression": "AVG(`rmse`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": "RMSE"
+              },
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "avg(rmse)",
+                  "rowNumber": 0
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 3,
+            "width": 2,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "kpi_r2",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "model_evaluation",
+                  "fields": [
+                    {
+                      "name": "avg(r2)",
+                      "expression": "AVG(`r2`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": "R²"
+              },
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "avg(r2)",
+                  "rowNumber": 0
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 8,
+            "y": 3,
+            "width": 2,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "kpi_mape",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "model_evaluation",
+                  "fields": [
+                    {
+                      "name": "avg(mape)",
+                      "expression": "AVG(`mape`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": "MAPE"
+              },
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "avg(mape)",
+                  "rowNumber": 0
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 10,
+            "y": 3,
+            "width": 2,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "chart_predicted_by_product",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "demand_by_product",
+                  "fields": [
+                    {
+                      "name": "product_name",
+                      "expression": "`product_name`"
+                    },
+                    {
+                      "name": "sum(total_predicted_demand)",
+                      "expression": "SUM(`total_predicted_demand`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": "Predicted Demand by Product"
+              },
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "product_name",
+                  "displayName": "product_name",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                },
+                "y": {
+                  "fieldName": "sum(total_predicted_demand)",
+                  "displayName": "total_predicted_demand",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "color": {
+                  "fieldName": "product_name",
+                  "displayName": "product_name",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 45,
+            "width": 6,
+            "height": 5
+          }
+        },
+        {
+          "widget": {
+            "name": "chart_error_by_city",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "demand_by_city",
+                  "fields": [
+                    {
+                      "name": "destination_city",
+                      "expression": "`destination_city`"
+                    },
+                    {
+                      "name": "avg(avg_abs_error)",
+                      "expression": "AVG(`avg_abs_error`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": "Prediction Error by City"
+              },
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "destination_city",
+                  "displayName": "destination_city",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                },
+                "y": {
+                  "fieldName": "avg(avg_abs_error)",
+                  "displayName": "avg_abs_error",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "color": {
+                  "fieldName": "destination_city",
+                  "displayName": "destination_city",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 45,
+            "width": 6,
+            "height": 5
+          }
+        },
+        {
+          "widget": {
+            "name": "filter_time_grain",
+            "spec": {
+              "version": 2,
+              "frame": {
+                "showTitle": true,
+                "title": "Time Grain"
+              },
+              "widgetType": "filter-single-select",
+              "encodings": {
+                "fields": [
+                  {
+                    "variableName": "time_grain"
+                  }
+                ]
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 6,
+            "width": 4,
+            "height": 2
+          }
+        }
+      ],
+      "pageType": "PAGE_TYPE_CANVAS",
+      "layoutVersion": "GRID_V1"
+    },
+    {
+      "name": "data_drift_monitoring",
+      "displayName": "Data Drift Monitoring",
+      "layout": [
+        {
+          "widget": {
+            "name": "drift_title",
+            "multilineTextboxSpec": {
+              "lines": [
+                "## Data Drift Monitoring\n",
+                "\n",
+                "KS test results comparing **training vs testing** data distributions from `mle.gold.product_city_demand`. Results are read directly from `mle.monitoring.model_drift_ks_results` — no recalculation.\n",
+                "\n",
+                "**Significance rule:** Raw p-values are used (adjusted p-values not available). A feature is flagged as **Drift Detected** when p-value < 0.05. Overall drift is detected if **any** feature exceeds this threshold."
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 12,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "pvalue_bar",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "drift_results",
+                  "fields": [
+                    {
+                      "name": "feature",
+                      "expression": "`feature`"
+                    },
+                    {
+                      "name": "sum(p_value)",
+                      "expression": "SUM(`p_value`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "showDescription": true,
+                "title": {
+                  "value": "P-Value by Feature (Raw, Threshold = 0.05)",
+                  "fields": []
+                },
+                "description": {
+                  "value": "Raw p-values from KS test comparing training vs testing distributions. Bars below the dashed line indicate statistically significant drift.",
+                  "fields": []
+                }
+              },
+              "version": 3,
+              "annotations": [
+                {
+                  "type": "horizontal-line",
+                  "encodings": {
+                    "y": {
+                      "dataValue": "0.05",
+                      "dataType": "DOUBLE"
+                    },
+                    "label": {
+                      "value": "p = 0.05 threshold"
+                    },
+                    "type": "constant"
+                  }
+                }
+              ],
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "feature",
+                  "displayName": "Feature",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                },
+                "y": {
+                  "fieldName": "sum(p_value)",
+                  "displayName": "p-value (raw)",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 5,
+            "width": 12,
+            "height": 5
+          }
+        },
+        {
+          "widget": {
+            "name": "total_features",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "drift_summary",
+                  "fields": [
+                    {
+                      "name": "sum(total_features)",
+                      "expression": "SUM(`total_features`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": "Total Features Tested"
+              },
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "sum(total_features)",
+                  "rowNumber": 0
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 2,
+            "width": 3,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "drifted_features",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "drift_summary",
+                  "fields": [
+                    {
+                      "name": "sum(drifted_features)",
+                      "expression": "SUM(`drifted_features`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": "Features with Significant Drift"
+              },
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "sum(drifted_features)",
+                  "rowNumber": 0
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 3,
+            "y": 2,
+            "width": 3,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "status_table",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "drift_summary",
+                  "fields": [
+                    {
+                      "name": "overall_status",
+                      "expression": "`overall_status`"
+                    },
+                    {
+                      "name": "total_features",
+                      "expression": "`total_features`"
+                    },
+                    {
+                      "name": "drifted_features",
+                      "expression": "`drifted_features`"
+                    },
+                    {
+                      "name": "comparison_type",
+                      "expression": "`comparison_type`"
+                    },
+                    {
+                      "name": "latest_eval_date",
+                      "expression": "`latest_eval_date`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": "Overall Drift Status"
+              },
+              "version": 2,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "overall_status"
+                  },
+                  {
+                    "fieldName": "total_features"
+                  },
+                  {
+                    "fieldName": "drifted_features"
+                  },
+                  {
+                    "fieldName": "comparison_type"
+                  },
+                  {
+                    "fieldName": "latest_eval_date"
+                  }
+                ]
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 2,
+            "width": 6,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "drift_detail_table",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "drift_results",
+                  "fields": [
+                    {
+                      "name": "feature",
+                      "expression": "`feature`"
+                    },
+                    {
+                      "name": "ks_statistic",
+                      "expression": "`ks_statistic`"
+                    },
+                    {
+                      "name": "p_value",
+                      "expression": "`p_value`"
+                    },
+                    {
+                      "name": "drift_status",
+                      "expression": "`drift_status`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": "KS Test Results by Feature"
+              },
+              "version": 2,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "feature"
+                  },
+                  {
+                    "fieldName": "ks_statistic"
+                  },
+                  {
+                    "fieldName": "p_value"
+                  },
+                  {
+                    "fieldName": "drift_status"
+                  }
+                ]
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 10,
+            "width": 12,
+            "height": 5
+          }
+        }
+      ],
+      "pageType": "PAGE_TYPE_CANVAS",
+      "layoutVersion": "GRID_V1"
+    }
+  ],
+  "uiSettings": {
+    "theme": {
+      "widgetHeaderAlignment": "ALIGNMENT_UNSPECIFIED"
+    },
+    "applyModeEnabled": false
+  },
+  "variables": [
+    {
+      "name": "time_grain",
+      "displayName": "time_grain",
+      "field": {
+        "options": [
+          {
+            "expression": "DATE_TRUNC(\"MONTH\", `joined_demand`.`transaction_date`)"
+          },
+          {
+            "expression": "DATE_TRUNC(\"DAY\", `joined_demand`.`transaction_date`)"
+          },
+          {
+            "expression": "DATE_TRUNC(\"WEEK\", `joined_demand`.`transaction_date`)"
+          },
+          {
+            "expression": "DATE_TRUNC(\"YEAR\", `joined_demand`.`transaction_date`)"
+          }
+        ]
+      }
+    }
+  ]
+}
