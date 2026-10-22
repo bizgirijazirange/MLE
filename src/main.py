@@ -2,7 +2,7 @@
 
 Thin orchestration script that runs the data engineering (Medallion:
 Bronze → Silver → Gold) and machine learning (Feature Engineering →
-Train → Register → Predict) pipelines in sequence.
+Train → Register → Predict) pipelines in sequence..
 
 All class definitions live in importable ``.py`` modules
 (``medallion_pipeline.py``, ``ml_pipeline.py``) in the same directory.
